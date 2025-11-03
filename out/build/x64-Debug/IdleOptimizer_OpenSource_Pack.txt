@@ -1,0 +1,1248 @@
+===== IdleOptimizer — Open Source Pack =====
+(Everything below is plain text; copy sections into files as labeled.)
+
+=== [CMAKE] CMakeLists.txt ===
+cmake_minimum_required(VERSION 3.20)
+project(IdleOptimizerVS LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+include(FetchContent)
+FetchContent_Declare(
+  nlohmann_json
+  URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.hpp
+  DOWNLOAD_NO_EXTRACT TRUE
+  DOWNLOAD_NAME json.hpp
+)
+FetchContent_Populate(nlohmann_json)
+
+add_executable(IdleOptimizer
+    src/main.cpp
+    src/config_loader.hpp
+)
+
+add_library(nlohmann_json INTERFACE)
+target_include_directories(nlohmann_json INTERFACE ${nlohmann_json_SOURCE_DIR})
+target_link_libraries(IdleOptimizer PRIVATE nlohmann_json)
+
+# (Optional) Copy assets next to the exe after build. Comment out if not needed.
+# set(ASSET_FILES
+#     ${CMAKE_SOURCE_DIR}/assets/config.json
+#     ${CMAKE_SOURCE_DIR}/assets/optimizer_gui.html
+# )
+# add_custom_command(TARGET IdleOptimizer POST_BUILD
+#     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${ASSET_FILES} $<TARGET_FILE_DIR:IdleOptimizer>
+#     COMMENT "Copying assets to output directory"
+# )
+
+=== [C++] src/main.cpp ===
+#include <iostream>
+#include <fstream>
+#include <chrono>
+#include <algorithm>
+#include <vector>
+#include <string>
+#include <map>
+#include <random>
+#include <array>
+#include <unordered_set>
+#include <iomanip>
+#include <streambuf>
+using namespace std;
+typedef long long ll;
+
+// Tee streambuf to mirror stdout -> console + file
+class TeeBuf : public std::streambuf {
+    std::streambuf* sb1;
+    std::streambuf* sb2;
+public:
+    TeeBuf(std::streambuf* s1, std::streambuf* s2) : sb1(s1), sb2(s2) {}
+protected:
+    virtual int overflow(int c) override {
+        if (c == EOF) return !EOF;
+        const int r1 = sb1 ? sb1->sputc(c) : c;
+        const int r2 = sb2 ? sb2->sputc(c) : c;
+        return (r1 == EOF || r2 == EOF) ? EOF : c;
+    }
+    virtual int sync() override {
+        int r1 = sb1 ? sb1->pubsync() : 0;
+        int r2 = sb2 ? sb2->pubsync() : 0;
+        return (r1 == 0 && r2 == 0) ? 0 : -1;
+    }
+};
+
+// USER SETTINGS (defaults) ---------------------------------------------------------------------
+const int EVENT_DURATION_DAYS = 11;
+const int EVENT_DURATION_HOURS = 1;
+const int EVENT_DURATION_MINUTES = 0;
+const int EVENT_DURATION_SECONDS = 0;
+const int UNLOCKED_PETS = 38;
+const int DLs = 1009;
+
+// Starting levels (21 entries; 0..9 level, 10..19 speed, 20 dummy)
+vector<int> currentLevels = {
+    // Production Levels
+    9, 18, 14,
+    7, 5, 11,
+    8, 4, 10,
+    6,            // Event Currency
+    // Speed Levels
+    8, 10, 10,
+    7, 6, 10,
+    7, 4, 10,
+    6,            // Event Currency
+    0             // Dummy placeholder
+};
+// Starting resources (10 entries)
+vector<double> resourceCounts = {
+    95000,  850000, 267500,
+    72400,  130260, 54750,
+    3339,
+    1/((500.0 + DLs)/5.0),
+    1/(UNLOCKED_PETS/100.0),
+    447
+};
+// Initial path
+vector<int> upgradePath = {16,7,8,4,10,8,16,17,6,0,4,8,14,16,8,7,10,5,6,4,2,2,17,6,8,2,14,6,0,13,8,7,2,5,6,4,17,14,0,8,2,6,7,14,8,17,0,5,6,1,6,8,17,3,13,0,7,2,6,2,4,8,7,5,2,6,2,4,17,8,9,5,6,7,19,3,0,13,8,19,5,6,9,7,0,2,6,8,7,3,5,6,3,7,0,8,19,9,6,8,6,0,9,5,7,3,19,2,6,8,7,0,6,2,8,9,9,5,9,9,20};
+const bool isFullPath = true;
+const bool allowSpeedUpgrades = true;
+const bool runOptimization = true;
+
+// ADVANCED SETTINGS ---------------------------------------------------------------------
+const int outputInterval = 5000; // ms
+const double EVENT_CURRENCY_WEIGHT = 100e-5;
+const double FREE_EXP_WEIGHT = 6e-5;
+const double PET_STONES_WEIGHT = 4.5e-5;
+const double GROWTH_WEIGHT = 7e-5;
+
+const vector<double> busyTimesStart =   {19,43,67,91,115,139,163,187,211,235,259};
+const vector<double> busyTimesEnd   =   {27,51,75,99,123,147,171,195,219,243,265};
+
+// PROGRAM SETTINGS -----------------------------------------------------------------------
+constexpr array<const char*, 10> resourceNames = {{"Tomb", "Bat", "Ghost", "Witch_Book", "Witch_Soup", "Eye", "PET_STONES", "FREE_EXP", "GROWTH", "Black_Cat"}};
+constexpr double INFINITY_VALUE = (1e100);
+constexpr int NUM_RESOURCES = resourceNames.size();
+constexpr int TOTAL_SECONDS = ((EVENT_DURATION_DAYS)*24*3600+(EVENT_DURATION_HOURS)*3600+(EVENT_DURATION_MINUTES)*60+EVENT_DURATION_SECONDS);
+
+map<int, string> upgradeNames;
+array<double, TOTAL_SECONDS> timeNeededSeconds{};
+
+// Forward declare config loader so we can optionally load JSON at start (if provided next to exe)
+void loadConfigJson(const std::string& path);
+
+// UTILITY FUNCTIONS --------------------------------------------------------------------
+template <typename T>
+void printVector(vector<T>& x, ostream& out = cout) { for (auto item : x) out << item << ","; }
+
+class NullBuffer : public std::streambuf { public: int overflow(int c) override { return c; } };
+class NullStream : public std::ostream { public: NullStream() : std::ostream(&m_sb) {} private: NullBuffer m_sb; };
+
+class Logger {
+    int interval;
+    mutable chrono::steady_clock::time_point lastLogTime;
+    ostream& out;
+public:
+    Logger(int outputInterval, ostream& output = cout)
+        : interval(outputInterval), lastLogTime(chrono::steady_clock::now()), out(output) {}
+    void logImprovement(const string& type, vector<int>& path, const double score) const {
+        auto now = chrono::steady_clock::now();
+        auto elapsed = chrono::duration_cast<chrono::milliseconds>(now - lastLogTime).count();
+        if (elapsed >= interval) {
+            out << "[Improvement/" << type << "] score=" << fixed << setprecision(8) << score << "\n{";
+            printVector(path, out);
+            out << "}\n";
+            lastLogTime = now;
+        }
+    }
+};
+struct SearchContext {
+    Logger logger;
+    const vector<double>& resources;
+    const vector<int>& levels;
+};
+struct OptimizationPackage {
+    vector<int> path;
+    double score;
+    mt19937 randomEngine;
+    unordered_set<string> deadMoves = {};
+};
+struct Proposal {
+    string type;
+    double newScore;
+    int indexA = 0;
+    int indexB = 0;
+    int rotateIndex = 0;
+    int upgrade = 0;
+    static Proposal Insert(int index, int upgradeType, double score) { return Proposal{"Insert", score, index, 0, 0, upgradeType}; }
+    static Proposal Remove(int index,  double score) { return Proposal{"Remove", score, index, 0, 0, 0}; }
+    static Proposal Swap(int indexA, int indexB, double score) { return Proposal{"Swap", score, indexA, indexB, 0, 0}; }
+    static Proposal Rotate(int indexA, int indexB, int rotateIndex, double score) { return Proposal{"Rotate", score, indexA, indexB, rotateIndex, 0}; }
+};
+void nameUpgrades() {
+    for (int i = 0; i < NUM_RESOURCES; i++) {
+        upgradeNames[i] = string(resourceNames[i]) + "_Level";
+        upgradeNames[i + NUM_RESOURCES] = string(resourceNames[i]) + "_Speed";
+    }
+    upgradeNames[20] = "Complete";
+}
+vector <int> adjustFullPath(vector<int>& levels){ // not thread-safe
+    levels[1]--; // Adjust first level because it always starts at 1
+    auto it = upgradePath.begin();
+    while (it != upgradePath.end()) {
+        if (levels[*it] > 0) {
+            levels[*it]--;
+            it = upgradePath.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    return levels;
+}
+void printFormattedResults(vector<int>& path, vector<int>& simulationLevels, vector<double>& simulationResources, double finalScore) {
+    cout << "Upgrade Path: \n{";
+    printVector(path);
+    cout << "}\n";
+    cout << "Final Resource Counts: ";
+    printVector(simulationResources);
+    cout << "\n";
+    cout << "Final Upgrade Levels: ";
+    printVector(simulationLevels);
+    cout << "\n";
+    cout << "Event Currency: " << simulationResources[9] << "\n";
+    cout << "Free Exp (" << DLs << " DLs): "  << simulationResources[7] * (500.0 + DLs) / 5.0 << " (" << simulationResources[7] << " levels * cycles)" << "\n";
+    cout << "Pet Stones: " << simulationResources[6] << "\n";
+    cout << "Growth (" << UNLOCKED_PETS << " pets): "  << simulationResources[8] * UNLOCKED_PETS / 100.0 << " (" << simulationResources[8] << " levels * cycles)" << "\n";
+    cout << "Score: " << fixed << setprecision(8) << finalScore << "\n\n";
+}
+void preprocessBusyTimes(const vector<double>& startHours, const vector<double>& endHours) {
+    for (size_t i = 0; i < startHours.size(); ++i) {
+        int startSec = static_cast<int>(startHours[i] * 3600.0);
+        int endSec = static_cast<int>(endHours[i] * 3600.0);
+        startSec = min(startSec, TOTAL_SECONDS - 1);
+        endSec = min(endSec, TOTAL_SECONDS - 1);
+        for (int s = startSec; s <= endSec; ++s) {
+            timeNeededSeconds[s] = endSec - s;
+        }
+    }
+}
+inline double additionalTimeNeeded(double expectedTimeSeconds) {
+    int idx = static_cast<int>(expectedTimeSeconds);
+    if (idx >= TOTAL_SECONDS) return 0.0;
+    return timeNeededSeconds[idx];
+}
+vector <int> generateRandomPath(int length = TOTAL_SECONDS/3600) {
+    vector<int> randomPath = {};
+    for (int i = 0; i < length; i++) {
+        randomPath.push_back(rand() % NUM_RESOURCES + 10 * (rand() % 2));
+    }
+    randomPath.push_back(NUM_RESOURCES * 2);
+    return randomPath;
+}
+void readoutUpgrade(int upgradeType, vector<int>& levels, int elapsedSeconds) {
+    cout << upgradeNames[upgradeType] << " " << levels[upgradeType]
+        << " " << (int)elapsedSeconds/24/3600 << "d "
+        << (int)elapsedSeconds/3600%24 << "h "
+        << (int)elapsedSeconds/60%60 << "m\n";
+}
+
+// ALGORITHM FUNCTIONS ------------------------------------------------------------------
+double performUpgrade(vector<int>& levels, vector<double>& resources, int upgradeType, double& remainingTime) {
+    constexpr double cycleTimeMultiplier[10] = { 1.0/3.0, 1.0, 1.0/3.0, 1.0/3.0, 1.0/3.0, 1.0/3.0, 1.0/1200.0, 1.0/2500.0, 1.0/1800.0, 1.0/5000.0 };
+    constexpr double speedMultipliers[11] = {
+        1.0, 1.25, 1.5625, 1.953125, 2.44140625, 3.0517578125, 3.814697265625,
+        4.76837158203125, 5.960464477539063, 7.450580596923828, 9.313225746154785
+    };
+    int resourceType = upgradeType % NUM_RESOURCES;
+    if (upgradeType == NUM_RESOURCES * 2) { resourceType = -1; }
+    int newLevel = levels[upgradeType] + 1;
+    double baseCost = (3.0 * newLevel * newLevel * newLevel + 1.0) * 100.0;
+    if (upgradeType >= NUM_RESOURCES) baseCost *= 2.0;
+    double cost[10] = {}; double productionRates[10] = {};
+    switch (resourceType) {
+        case 0: cost[1] = baseCost * 10; break;
+        case 1: cost[1] = baseCost * 0.8; break;
+        case 2: cost[1] = baseCost; break;
+        case 3: cost[0] = baseCost; break;
+        case 4: cost[0] = baseCost; break;
+        case 5: cost[1] = baseCost; cost[2] = baseCost; break;
+        case 6: cost[0] = baseCost * 0.7; cost[3] = baseCost * 0.5; break;
+        case 7: cost[0] = baseCost; cost[4] = baseCost * 3; break;
+        case 8: cost[2] = baseCost * 1.2; cost[5] = baseCost; break;
+        case 9: cost[3] = baseCost; cost[4] = baseCost; cost[5] = baseCost; break;
+    }
+    productionRates[0] = levels[0] * cycleTimeMultiplier[0] * speedMultipliers[levels[10]];
+    productionRates[1] = levels[1] * cycleTimeMultiplier[1] * speedMultipliers[levels[11]];
+    productionRates[2] = levels[2] * cycleTimeMultiplier[2] * speedMultipliers[levels[12]];
+    productionRates[3] = levels[3] * cycleTimeMultiplier[3] * speedMultipliers[levels[13]];
+    productionRates[4] = levels[4] * cycleTimeMultiplier[4] * speedMultipliers[levels[14]];
+    productionRates[5] = levels[5] * cycleTimeMultiplier[5] * speedMultipliers[levels[15]];
+    productionRates[6] = levels[6] * cycleTimeMultiplier[6] * speedMultipliers[levels[16]];
+    productionRates[7] = levels[7] * cycleTimeMultiplier[7] * speedMultipliers[levels[17]];
+    productionRates[8] = levels[8] * cycleTimeMultiplier[8] * speedMultipliers[levels[18]];
+    productionRates[9] = levels[9] * cycleTimeMultiplier[9] * speedMultipliers[levels[19]];
+    double timeNeeded = 0;
+    double timeElapsed = TOTAL_SECONDS - remainingTime;
+    for (int i = 0; i < NUM_RESOURCES; i++) {
+        double neededResources = cost[i] - resources[i];
+        if (neededResources <= 0) continue;
+        if (productionRates[i] == 0) { timeNeeded = INFINITY_VALUE; break; }
+        timeNeeded = max(timeNeeded, neededResources / productionRates[i]);
+    }
+    int busyLookupIndex = static_cast<int>(timeElapsed + timeNeeded);
+    if (0 <= busyLookupIndex && busyLookupIndex < TOTAL_SECONDS){ timeNeeded += timeNeededSeconds[busyLookupIndex]; };
+    if (timeNeeded >= remainingTime || upgradeType == (2 * NUM_RESOURCES)) {
+        timeNeeded = remainingTime;
+        for (int i = 0; i < NUM_RESOURCES; ++i) resources[i] += productionRates[i] * timeNeeded;
+        return timeNeeded;
+    }
+    for (int i = 0; i < NUM_RESOURCES; ++i) resources[i] += productionRates[i] * timeNeeded - cost[i];
+    levels[upgradeType]++;
+    return timeNeeded;
+}
+double simulateUpgradePath(vector<int>& path, vector<int>& levels, vector<double>& resources, bool display = false) {
+    thread_local double time;
+    time = TOTAL_SECONDS;
+    for (auto upgradeType : path) {
+        if (time < 1e-3) return 0;
+        if (upgradeType >= NUM_RESOURCES && levels[upgradeType] >= 10) continue; // maxed speed
+        double timeTaken = performUpgrade(levels, resources, upgradeType, time);
+        time -= timeTaken;
+        if (display) {
+            int elapsedSeconds = TOTAL_SECONDS - time;
+            readoutUpgrade(upgradeType, levels, elapsedSeconds);
+        }
+    }
+    return time;
+}
+double calculateScore(vector<double>& resources, bool display = false) {
+    double score = 0;
+    for (int i = 0; i < NUM_RESOURCES; i++) { score += resources[i] * 1e-15; }
+    score += (min(resources[9], 10000.0) + max(0.0, (resources[9] - 10000)) * 0.01) * (EVENT_CURRENCY_WEIGHT);
+    score += resources[7] * (FREE_EXP_WEIGHT);
+    score += resources[8] * (GROWTH_WEIGHT);
+    score += resources[6] * (PET_STONES_WEIGHT);
+    return score;
+}
+double evaluatePath(vector<int>& path, const SearchContext& context){
+    thread_local vector<double> testResources = context.resources;
+    thread_local vector<int> testLevels = context.levels;
+    testResources = context.resources;
+    testLevels = context.levels;
+    simulateUpgradePath(path, testLevels, testResources);
+    return calculateScore(testResources);
+}
+void calculateFinalPath(vector<int>& path){
+    vector<int>     simulationLevels(currentLevels);
+    vector<double>  simulationResources(resourceCounts);
+    cout << "\n=== Final Path Simulation ===\n";
+    simulateUpgradePath(path, simulationLevels, simulationResources, true);
+    double simulationScore = calculateScore(simulationResources);
+    printFormattedResults(path, simulationLevels, simulationResources, simulationScore);
+}
+bool tryInsertUpgrade(OptimizationPackage& package, SearchContext& context, Proposal* outProposal = nullptr) {
+    int pathLength = (int)package.path.size();
+    thread_local vector<int> candidatePath;
+    uniform_int_distribution<> positionDist(0, pathLength);
+    int startPosition = positionDist(package.randomEngine);
+    const int maxTypes = (allowSpeedUpgrades ? NUM_RESOURCES * 2 : NUM_RESOURCES);
+    for (int i = 0; i < pathLength; i++) {
+        candidatePath = package.path;
+        int modulatedInsertPosition = (i + startPosition) % pathLength;
+        candidatePath.insert(candidatePath.begin() + modulatedInsertPosition, 0);
+        int startingUpgradeType = package.randomEngine() % (allowSpeedUpgrades ? NUM_RESOURCES * 2 : NUM_RESOURCES);
+        for (int upgradeType = 0; upgradeType < maxTypes; upgradeType++) {
+            int modulatedUpgradeType = (upgradeType + startingUpgradeType) % maxTypes;
+            candidatePath[modulatedInsertPosition] = modulatedUpgradeType;
+            double testScore = evaluatePath(candidatePath, context);
+            if (testScore > package.score) {
+                if (outProposal) *outProposal = Proposal::Insert(modulatedInsertPosition, modulatedUpgradeType, testScore);
+                package.path.insert(package.path.begin() + modulatedInsertPosition, modulatedUpgradeType);
+                package.score = testScore;
+                context.logger.logImprovement("Insert", package.path, package.score);
+                return true;
+            }
+        }
+    }
+    package.deadMoves.insert("Insert");
+    return false;
+}
+bool tryRemoveUpgrade(OptimizationPackage& package, SearchContext& context, Proposal* outProposal = nullptr) {
+    int pathLength = (int)package.path.size() - 1;
+    thread_local vector<int> candidatePath;
+    uniform_int_distribution<> swapDist(0, pathLength - 2);
+    int startPos = swapDist(package.randomEngine);
+    for (int i = 0; i < pathLength; i++) {
+        int removePos = (i + startPos) % (pathLength);
+        if (!allowSpeedUpgrades && package.path[removePos] >= NUM_RESOURCES) continue;
+        candidatePath = package.path;
+        candidatePath.erase(candidatePath.begin() + removePos);
+        double testScore = evaluatePath(candidatePath, context);
+        if (testScore >= package.score) {
+            if (outProposal) *outProposal = Proposal::Remove(removePos, testScore);
+            package.score = testScore;
+            package.path = candidatePath;
+            context.logger.logImprovement("Remove", package.path, package.score);
+            return true;
+        }
+    }
+    package.deadMoves.insert("Remove");
+    return false;
+}
+bool trySwapUpgrades(OptimizationPackage& package, SearchContext& context, Proposal* outProposal = nullptr) {
+    int pathLength = (int)package.path.size() - 1;
+    thread_local vector<int> candidatePath;
+    candidatePath = package.path;
+    double testScore;
+    uniform_int_distribution<> swapDist(0, pathLength - 2);
+    int startPos = swapDist(package.randomEngine);
+    for (int i2 = 0; i2 < pathLength - 1; i2++) {
+        for (int j2 = i2 + 1; j2 < pathLength - 1; j2++) {
+            int i = (i2 + startPos) % (pathLength - 1);
+            int j = (j2 + startPos) % (pathLength - 1);
+            if (candidatePath[i] == candidatePath[j]) continue;
+            swap(candidatePath[i], candidatePath[j]);
+            testScore = evaluatePath(candidatePath, context);
+            if (testScore > package.score) {
+                if (outProposal) *outProposal = Proposal::Swap(i, j, testScore);
+                package.path = candidatePath;
+                package.score = testScore;
+                context.logger.logImprovement("Swap", package.path, package.score);
+                return true;
+            }
+            swap(candidatePath[i], candidatePath[j]);
+        }
+    }
+    package.deadMoves.insert("Swap");
+    return false;
+}
+bool tryRotateSubsequences(OptimizationPackage& package, SearchContext& context, Proposal* outProposal = nullptr) {
+    int pathLength = (int)package.path.size() - 1;
+    thread_local vector<int> candidatePath;
+    double testScore;
+    uniform_int_distribution<> rotateDist(0, pathLength - 3);
+    int i = rotateDist(package.randomEngine);
+    uniform_int_distribution<> rotateDist2(i+2, pathLength - 1);
+    int j = rotateDist2(package.randomEngine);
+    for (int k = 0; k < j-i; k++) {
+        candidatePath = package.path;
+        int offset = (k + 2) / 2;
+        bool isLeft = (k % 2 == 0);
+        if(isLeft)  rotate(candidatePath.begin() + i, candidatePath.begin() + i + offset, candidatePath.begin() + j + 1);
+        else        rotate(candidatePath.begin() + i, candidatePath.begin() + j - offset + 1, candidatePath.begin() + j + 1);
+        testScore = evaluatePath(candidatePath, context);
+        int rotationPos = isLeft ? i + offset: j - offset + 1;
+        if (testScore > package.score) {
+            if (outProposal) *outProposal = Proposal::Rotate(i, j + 1, rotationPos, testScore);
+            package.path = candidatePath;
+            package.score = testScore;
+            context.logger.logImprovement("Rotation", package.path, package.score);
+            return true;
+        }
+    }
+    return false;
+}
+bool exhaustRotateSubsequences(OptimizationPackage& package, SearchContext& context, Proposal* outProposal = nullptr) {
+    int pathLength = (int)package.path.size() - 1;
+    int maxIndex = pathLength - 1;
+    thread_local vector<int> candidatePath;
+    double testScore;
+    uniform_int_distribution<> rotateDist(0, maxIndex - 2);
+    int i = rotateDist(package.randomEngine);
+    for (int i2 = 0; i2 < maxIndex - 1; i2++){
+        int i3 = (i + i2) % (maxIndex - 1);
+        uniform_int_distribution<> rotateDist2(0, maxIndex-i3);
+        int j = rotateDist2(package.randomEngine);
+        for (int j2 = 0; j2 < maxIndex - i3 - 1; j2++){
+            int j3 = i3 + 2 + ((j + j2) % (maxIndex - i3 - 1));
+            for (int k = 0; k < j3-i3; k++) {
+                candidatePath = package.path;
+                int offset = (k + 2) / 2;
+                bool isLeft = (k % 2 == 0);
+                if(isLeft)  rotate(candidatePath.begin() + i3, candidatePath.begin() + i3 + offset, candidatePath.begin() + j3 + 1);
+                else        rotate(candidatePath.begin() + i3, candidatePath.begin() + j3 - offset + 1, candidatePath.begin() + j3 + 1);
+                double testScore = evaluatePath(candidatePath, context);
+                int rotationPos = isLeft ? i3 + offset: j3 - offset + 1;
+                if (testScore > package.score) {
+                    if (outProposal) *outProposal = Proposal::Rotate(i3, j3+1, rotationPos, testScore);
+                    package.path = candidatePath;
+                    package.score = testScore;
+                    context.logger.logImprovement("Rotation", package.path, package.score);
+                    return true;
+                }
+            }
+        }
+    }
+    package.deadMoves.insert("Rotate");
+    return false;
+}
+void optimizeUpgradePath(OptimizationPackage& package, SearchContext& context, const int maxIterations = 10000) {
+    random_device seed;
+    mt19937 randomEngine(seed());
+    package.randomEngine = randomEngine;
+
+    int iterationCount = 0;
+    int noImprovementStreak = 0;
+    int InsertCount = 0, RemoveCount = 0, SwapCount = 0, RotationCount = 0;
+
+    cout << "Optimization started (maxIterations=" << maxIterations << ")..." << "\n";
+    while (noImprovementStreak < maxIterations) {
+        iterationCount++;
+        bool improved = false;
+        int strategy = iterationCount % 100;
+        if(package.deadMoves.count("Rotation")){
+            break;
+        }
+        else if (package.deadMoves.count("Insert") && package.deadMoves.count("Remove") && package.deadMoves.count("Swap")){
+            improved = tryRotateSubsequences(package, context); if (improved) RotationCount++;
+        }
+        else if (strategy < 15 && !package.deadMoves.count("Insert")){
+            improved = tryInsertUpgrade(package, context); if (improved) InsertCount++;
+        }
+        else if (strategy < 30 && !package.deadMoves.count("Remove")){
+            improved = tryRemoveUpgrade(package, context); if (improved) RemoveCount++;
+        }
+        else if (strategy < 32){
+            improved = tryRotateSubsequences(package, context); if (improved) RotationCount++;
+        }
+        else if (!package.deadMoves.count("Swap")){
+            improved = trySwapUpgrades(package, context); if (improved) SwapCount++;
+        }
+
+        if (improved) {
+            noImprovementStreak = 0;
+            package.deadMoves.clear();
+        } else {
+            noImprovementStreak++;
+        }
+
+        if (iterationCount % 500 == 0) {
+            cout << "[iter " << iterationCount << "] score=" << fixed << setprecision(8) << package.score
+                 << "  noImp=" << noImprovementStreak << "\n";
+        }
+    }
+    cout << "Optimization finished. Iters=" << iterationCount
+         << "  lastNoImpStreak=" << noImprovementStreak << "\n";
+}
+
+// Mini JSON loader forwarder
+void loadConfigJson(const std::string& path);
+
+int main() {
+    // Open tee file
+    ofstream logfile("run_log.txt", ios::out | ios::trunc);
+    TeeBuf teebuf(cout.rdbuf(), logfile.rdbuf());
+    cout.rdbuf(&teebuf); // mirror std::cout into file
+
+    cout << "IdleOptimizer starting..." << endl;
+    cout << "TOTAL_SECONDS=" << TOTAL_SECONDS << " (" << (TOTAL_SECONDS/3600.0) << " hours)" << endl;
+
+    nameUpgrades();
+    preprocessBusyTimes(busyTimesStart, busyTimesEnd);
+
+    if (upgradePath.empty()) { upgradePath = generateRandomPath(); }
+    vector<int> levelsCopy(currentLevels);
+
+    if (isFullPath) { levelsCopy = adjustFullPath(levelsCopy); }
+
+    // Initial score printout
+    cout << "Initial path length: " << upgradePath.size() << endl;
+    calculateFinalPath(upgradePath);
+
+    if (runOptimization) {
+        Logger logger(outputInterval, cout);
+        SearchContext context{logger, resourceCounts, currentLevels};
+        OptimizationPackage package = {upgradePath, 0.0, mt19937()};
+        package.score = evaluatePath(package.path, context); // seed with current score
+        cout << "Seed score=" << fixed << setprecision(8) << package.score << "\n";
+
+        optimizeUpgradePath(package, context, 10000); // tweak this if you want longer/shorter runs
+        upgradePath = move(package.path);
+    }
+
+    calculateFinalPath(upgradePath);
+
+#ifdef _WIN32
+    system("pause");
+#endif
+    return 0;
+}
+
+=== [C++] src/config_loader.hpp ===
+#pragma once
+#include <fstream>
+#include <vector>
+#include <string>
+#include <iostream>
+#include <json.hpp> // single-header include (nlohmann/json)
+
+extern int EVENT_DURATION_DAYS;
+extern int EVENT_DURATION_HOURS;
+extern int EVENT_DURATION_MINUTES;
+extern int EVENT_DURATION_SECONDS;
+
+extern int UNLOCKED_PETS;
+extern int DLs;
+
+extern std::vector<int> currentLevels;
+extern std::vector<double> resourceCounts;
+extern std::vector<int> upgradePath;
+
+extern bool isFullPath;
+extern bool allowSpeedUpgrades;
+extern bool runOptimization;
+
+extern int outputInterval;
+extern double EVENT_CURRENCY_WEIGHT;
+extern double FREE_EXP_WEIGHT;
+extern double PET_STONES_WEIGHT;
+extern double GROWTH_WEIGHT;
+
+extern std::vector<double> busyTimesStart;
+extern std::vector<double> busyTimesEnd;
+
+using nlohmann::json;
+
+template <typename T>
+static void maybe_set(const json& j, const char* key, T& out) {
+    if (j.contains(key) && !j[key].is_null()) out = j[key].get<T>();
+}
+
+inline void loadConfigJson(const std::string& path) {
+    std::ifstream f(path);
+    if (!f) { std::cerr << "No config file found: " << path << "\n"; return; }
+    json j;
+    try { f >> j; }
+    catch (const std::exception& e) {
+        std::cerr << "JSON parse error: " << e.what() << "\n"; return;
+    }
+
+    maybe_set(j, "EVENT_DURATION_DAYS",    EVENT_DURATION_DAYS);
+    maybe_set(j, "EVENT_DURATION_HOURS",   EVENT_DURATION_HOURS);
+    maybe_set(j, "EVENT_DURATION_MINUTES", EVENT_DURATION_MINUTES);
+    maybe_set(j, "EVENT_DURATION_SECONDS", EVENT_DURATION_SECONDS);
+    maybe_set(j, "UNLOCKED_PETS", UNLOCKED_PETS);
+    maybe_set(j, "DLs", DLs);
+    maybe_set(j, "isFullPath", isFullPath);
+    maybe_set(j, "allowSpeedUpgrades", allowSpeedUpgrades);
+    maybe_set(j, "runOptimization", runOptimization);
+    maybe_set(j, "outputInterval", outputInterval);
+    maybe_set(j, "EVENT_CURRENCY_WEIGHT", EVENT_CURRENCY_WEIGHT);
+    maybe_set(j, "FREE_EXP_WEIGHT", FREE_EXP_WEIGHT);
+    maybe_set(j, "PET_STONES_WEIGHT", PET_STONES_WEIGHT);
+    maybe_set(j, "GROWTH_WEIGHT", GROWTH_WEIGHT);
+
+    if (j.contains("currentLevels"))   currentLevels   = j["currentLevels"].get<std::vector<int>>();
+    if (j.contains("resourceCounts"))  resourceCounts  = j["resourceCounts"].get<std::vector<double>>();
+    if (j.contains("upgradePath"))     upgradePath     = j["upgradePath"].get<std::vector<int>>();
+    if (j.contains("busyTimesStart"))  busyTimesStart  = j["busyTimesStart"].get<std::vector<double>>();
+    if (j.contains("busyTimesEnd"))    busyTimesEnd    = j["busyTimesEnd"].get<std::vector<double>>();
+}
+
+=== [HTML] assets/optimizer_gui.html ===
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Upgrade Optimizer — Settings GUI</title>
+  <style>
+    :root { --bg:#0b0f14; --card:#121822; --ink:#e8f0ff; --muted:#9db0c9; --acc:#5cc8ff; }
+    html,body{height:100%}
+    body{margin:0;background:linear-gradient(180deg,#0b0f14,#0e141c 40%,#0b0f14);color:var(--ink);font-family:system-ui,Segoe UI,Roboto,Inter,Arial,sans-serif}
+    .wrap{max-width:1100px;margin:24px auto;padding:16px}
+    h1{font-size:1.4rem;margin:0 0 12px}
+    h2{margin:0 0 12px}
+    h3{margin:8px 0}
+    .card{background:var(--card);border:1px solid #1c2533;border-radius:14px;padding:16px;margin-bottom:16px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .row{display:grid;grid-template-columns: 260px 1fr;align-items:center;gap:8px;margin:6px 0}
+    label{color:var(--muted);font-size:.95rem}
+    input, textarea, select{width:100%;box-sizing:border-box;background:#0b111a;color:var(--ink);border:1px solid #223048;border-radius:10px;padding:10px 12px;font-family:ui-monospace,Consolas,monospace}
+    textarea{min-height:72px}
+    .hint{color:var(--muted);font-size:.85rem}
+    .btns{display:flex;gap:10px;flex-wrap:wrap}
+    button{background:linear-gradient(180deg,#1c88ff,#1460ff);border:none;color:white;padding:10px 14px;border-radius:10px;font-weight:600;cursor:pointer}
+    button.secondary{background:#1a2331}
+    .muted{color:var(--muted)}
+    .footer{opacity:.8;font-size:.9rem}
+    .danger{color:#ff9b9b}
+    .ok{color:#b1ffb1}
+    .upgrid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+    .pill{display:inline-block;padding:6px 10px;border:1px solid #223048;border-radius:999px;margin:2px 4px;background:#0b111a}
+    .mono{font-family:ui-monospace,Consolas,monospace}
+    .resgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+    .readonly{opacity:.8}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Upgrade Optimizer — Settings GUI (v5)</h1>
+    <div class="card">
+      <p class="muted">Edit values, then <b>Save JSON</b>. This file matches what your C++ loader expects. You can also <b>Load JSON</b> to continue where you left off.</p>
+      <div class="btns" style="margin:8px 0 4px">
+        <button id="loadBtn" class="secondary">Load JSON...</button>
+        <button id="saveBtn">Save JSON</button>
+      </div>
+      <div id="status" class="muted"></div>
+    </div>
+
+    <div class="card">
+      <h2>Scalars</h2>
+      <div class="grid">
+        <div>
+          <div class="row"><label>EVENT_DURATION_DAYS</label><input id="EVENT_DURATION_DAYS" type="number" value="11"></div>
+          <div class="row"><label>EVENT_DURATION_HOURS</label><input id="EVENT_DURATION_HOURS" type="number" value="1"></div>
+          <div class="row"><label>EVENT_DURATION_MINUTES</label><input id="EVENT_DURATION_MINUTES" type="number" value="0"></div>
+          <div class="row"><label>EVENT_DURATION_SECONDS</label><input id="EVENT_DURATION_SECONDS" type="number" value="0"></div>
+          <div class="row"><label>UNLOCKED_PETS</label><input id="UNLOCKED_PETS" type="number" value="38"></div>
+          <div class="row"><label>DLs</label><input id="DLs" type="number" value="1009"></div>
+        </div>
+        <div>
+          <div class="row"><label>outputInterval (ms)</label><input id="outputInterval" type="number" value="5000"></div>
+          <div class="row"><label>EVENT_CURRENCY_WEIGHT</label><input id="EVENT_CURRENCY_WEIGHT" type="number" step="any" value="0.001"></div>
+          <div class="row"><label>FREE_EXP_WEIGHT</label><input id="FREE_EXP_WEIGHT" type="number" step="any" value="0.00006"></div>
+          <div class="row"><label>PET_STONES_WEIGHT</label><input id="PET_STONES_WEIGHT" type="number" step="any" value="0.000045"></div>
+          <div class="row"><label>GROWTH_WEIGHT</label><input id="GROWTH_WEIGHT" type="number" step="any" value="0.00007"></div>
+          <div class="row"><label>Flags</label>
+            <div>
+              <label><input type="checkbox" id="isFullPath" checked> isFullPath</label>
+              <span style="display:inline-block;width:10px"></span>
+              <label><input type="checkbox" id="allowSpeedUpgrades" checked> allowSpeedUpgrades</label>
+              <span style="display:inline-block;width:10px"></span>
+              <label><input type="checkbox" id="runOptimization" checked> runOptimization</label>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="hint">Tip: CSV fields support math expressions and can reference <code>DLs</code> and <code>UNLOCKED_PETS</code> (e.g. <code>1/((500+DLs)/5)</code>).</p>
+    </div>
+
+    <div class="card">
+      <h2>Weekly schedule → auto-generate busy arrays</h2>
+      <div class="row"><label>Event starts on</label>
+        <select id="startWeekday">
+          <option value="Mon">Mon</option>
+          <option value="Tue">Tue</option>
+          <option value="Wed">Wed</option>
+          <option value="Thu">Thu</option>
+          <option value="Fri">Fri</option>
+          <option value="Sat">Sat</option>
+          <option value="Sun">Sun</option>
+        </select>
+      </div>
+      <div class="row"><label>Mode</label>
+        <div>
+          <label><input type="radio" name="schedmode" value="daily" checked> Same every day</label>
+          <span style="display:inline-block;width:10px"></span>
+          <label><input type="radio" name="schedmode" value="custom"> Custom per day</label>
+        </div>
+      </div>
+      <div id="dailyBox" class="row"><label>Daily busy intervals</label><input id="dailyIntervals" placeholder="19:00-03:00"></div>
+      <div id="perDayBox" style="display:none">
+        <div class="row"><label>Mon</label><input id="monI" placeholder="e.g. 01:30-09:00"></div>
+        <div class="row"><label>Tue</label><input id="tueI" placeholder=""></div>
+        <div class="row"><label>Wed</label><input id="wedI" placeholder=""></div>
+        <div class="row"><label>Thu</label><input id="thuI" placeholder=""></div>
+        <div class="row"><label>Fri</label><input id="friI" placeholder=""></div>
+        <div class="row"><label>Sat</label><input id="satI" placeholder=""></div>
+        <div class="row"><label>Sun</label><input id="sunI" placeholder=""></div>
+      </div>
+      <div class="row"><label>Overnight handling</label>
+        <div>
+          <label><input type="checkbox" id="collapseOvernights" checked> Collapse midnight-spanning intervals (e.g., 19:00–03:00 → 19 → 27)</label>
+        </div>
+      </div>
+      <div class="row"><label>Apply on Save</label>
+        <div><label><input type="checkbox" id="autoApplySchedule" checked> Use schedule to fill busy arrays on Save</label></div>
+      </div>
+      <div class="btns">
+        <button id="genBusyBtn">Generate Busy Arrays Now</button>
+      </div>
+      <p class="hint">Format: <span class="mono">HH:MM-HH:MM</span>, comma-separated. Overnight ranges are collapsed when the box is checked.</p>
+    </div>
+
+    <div class="card">
+      <h2>Resources (starting counts)</h2>
+      <p class="muted">Edit the numeric amounts you currently have. <b>No slots for FREE_EXP or GROWTH</b> — those are computed from <code>DLs</code> and <code>UNLOCKED_PETS</code> automatically.</p>
+      <div class="resgrid">
+        <div>
+          <label class="muted">0 — Tomb</label>
+          <input id="res0" type="number" step="any" value="95000">
+        </div>
+        <div>
+          <label class="muted">1 — Bat</label>
+          <input id="res1" type="number" step="any" value="850000">
+        </div>
+        <div>
+          <label class="muted">2 — Ghost</label>
+          <input id="res2" type="number" step="any" value="267500">
+        </div>
+        <div>
+          <label class="muted">3 — Witch_Book</label>
+          <input id="res3" type="number" step="any" value="72400">
+        </div>
+        <div>
+          <label class="muted">4 — Witch_Soup</label>
+          <input id="res4" type="number" step="any" value="130260">
+        </div>
+        <div>
+          <label class="muted">5 — Eye</label>
+          <input id="res5" type="number" step="any" value="54750">
+        </div>
+        <div>
+          <label class="muted">6 — PET_STONES</label>
+          <input id="res6" type="number" step="any" value="3339">
+        </div>
+        <div>
+          <label class="muted">9 — Black_Cat</label>
+          <input id="res9" type="number" step="any" value="447">
+        </div>
+      </div>
+      <div style="margin-top:10px" class="muted readonly">
+        FREE_EXP (index 7) = <code>1 / ((500 + DLs) / 5)</code> → <span id="freeExpVal"></span><br>
+        GROWTH (index 8) = <code>1 / (UNLOCKED_PETS / 100)</code> → <span id="growthVal"></span>
+      </div>
+      <div class="btns" style="margin-top:10px">
+        <button id="syncFromResources">Sync → resourceCounts CSV</button>
+        <button class="secondary" id="syncToResources">Parse resourceCounts → fields</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Upgrades — labels & editors</h2>
+      <div id="legend" class="muted" style="margin-bottom:8px"></div>
+
+      <h3>Starting Levels</h3>
+      <div class="upgrid" id="levelGrid"></div>
+
+      <h3>Speed Levels</h3>
+      <div class="upgrid" id="speedGrid"></div>
+
+      <div class="row"><label>Dummy placeholder (index 20)</label><input id="dummyLevel" type="number" value="0"></div>
+      <div class="btns">
+        <button id="syncFromGrids">Sync → currentLevels CSV</button>
+        <button class="secondary" id="syncToGrids">Parse currentLevels → grids</button>
+      </div>
+      <div class="row"><label>upgradePath preview</label><div id="pathPreview" class="muted"></div></div>
+    </div>
+
+    <div class="card">
+      <h2>Vectors (CSV)</h2>
+      <div class="row"><label>currentLevels</label><textarea id="currentLevels" placeholder="9,18,14,7,5,11,8,4,10,6, 8,10,10,7,6,10,7,4,10,6, 0"></textarea></div>
+      <div class="row"><label>resourceCounts</label><textarea id="resourceCounts" placeholder="95000, 850000, 267500, 72400, 130260, 54750, 3339, 1/((500+DLs)/5), 1/(UNLOCKED_PETS/100), 447"></textarea></div>
+      <div class="row"><label>upgradePath</label><textarea id="upgradePath" placeholder="16,7,8,4,10,8,16,17,6,0,4,8,14,16,8,7,10,5,6,4,2,2,17,6,8,2,14,6,0,13,8,7,2,5,6,4,17,14,0,8,2,6,7,14,8,17,0,5,6,1,6,8,17,3,13,0,7,2,6,2,4,8,7,5,2,6,2,4,17,8,9,5,6,7,19,3,0,13,8,19,5,6,9,7,0,2,6,8,7,3,5,6,3,7,0,8,19,9,6,8,6,0,9,5,7,3,19,2,6,8,7,0,6,2,8,9,9,5,9,9,20"></textarea></div>
+      <div class="row"><label>busyTimesStart (hours)</label><textarea id="busyTimesStart" placeholder="19, 43, 67, ..."></textarea></div>
+      <div class="row"><label>busyTimesEnd (hours)</label><textarea id="busyTimesEnd" placeholder="27, 51, 75, ..."></textarea></div>
+      <p class="hint">CSV parser accepts expressions (like <code>1/3</code>) and lets you reference <code>DLs</code> and <code>UNLOCKED_PETS</code>.</p>
+    </div>
+
+    <div class="card footer">
+      <p>Save creates a <code>config.json</code> compatible with your C++ loader. Load lets you bring one back for editing.</p>
+    </div>
+  </div>
+
+  <input id="fileInput" type="file" accept="application/json" style="display:none" />
+
+  <script>
+    function $(id){ return document.getElementById(id); }
+
+    function isAllowedExpr(expr){
+      const extra = '0123456789+-*/()., ';
+      for(let i=0;i<expr.length;i++){
+        const c = expr[i];
+        const code = c.charCodeAt(0);
+        const isLetter = (code>=65 && code<=90) || (code>=97 && code<=122) || c==='_' ;
+        if (extra.indexOf(c)===-1 && !isLetter) return false;
+      }
+      return true;
+    }
+    function evalExpr(expr, vars){
+      if(!isAllowedExpr(expr)) throw new Error('Only numbers, + - * / ( ) , letters, and _');
+      const keys = Object.keys(vars);
+      const vals = Object.values(vars);
+      const fn = new Function(keys.join(','), 'return ('+expr+');');
+      return fn.apply(null, vals);
+    }
+
+    function parseCSVInts(text, vars){
+      if(!text.trim()) return [];
+      return text.split(',').map(function(s){
+        const t = s.trim();
+        if(!t) return null;
+        const v = evalExpr(t, vars);
+        const n = Number(v);
+        if(!isFinite(n)) throw new Error('Invalid int: '+t);
+        return Math.trunc(n);
+      }).filter(function(x){return x!==null;});
+    }
+    function parseCSVNums(text, vars){
+      if(!text.trim()) return [];
+      return text.split(',').map(function(s){
+        const t = s.trim();
+        if(!t) return null;
+        const v = evalExpr(t, vars);
+        const n = Number(v);
+        if(!isFinite(n)) throw new Error('Invalid number: '+t);
+        return n;
+      }).filter(function(x){return x!==null;});
+    }
+
+    function getScalars(){
+      return {
+        EVENT_DURATION_DAYS: +$('EVENT_DURATION_DAYS').value,
+        EVENT_DURATION_HOURS: +$('EVENT_DURATION_HOURS').value,
+        EVENT_DURATION_MINUTES: +$('EVENT_DURATION_MINUTES').value,
+        EVENT_DURATION_SECONDS: +$('EVENT_DURATION_SECONDS').value,
+        UNLOCKED_PETS: +$('UNLOCKED_PETS').value,
+        DLs: +$('DLs').value,
+        outputInterval: +$('outputInterval').value,
+        EVENT_CURRENCY_WEIGHT: +$('EVENT_CURRENCY_WEIGHT').value,
+        FREE_EXP_WEIGHT: +$('FREE_EXP_WEIGHT').value,
+        PET_STONES_WEIGHT: +$('PET_STONES_WEIGHT').value,
+        GROWTH_WEIGHT: +$('GROWTH_WEIGHT').value,
+        isFullPath: $('isFullPath').checked,
+        allowSpeedUpgrades: $('allowSpeedUpgrades').checked,
+        runOptimization: $('runOptimization').checked,
+      };
+    }
+
+    function computedFreeExp(DLs){ return 1/((500+DLs)/5); }
+    function computedGrowth(UNLOCKED_PETS){ return 1/(UNLOCKED_PETS/100); }
+
+    function updateComputed(){
+      const s = getScalars();
+      $('freeExpVal').textContent = computedFreeExp(s.DLs).toFixed(6);
+      $('growthVal').textContent  = computedGrowth(s.UNLOCKED_PETS).toFixed(6);
+    }
+
+    // ---- Resources helpers ----
+    function readResourcesFromGrid(){
+      const s = getScalars();
+      const arr = new Array(10);
+      arr[0] = +$('res0').value || 0;
+      arr[1] = +$('res1').value || 0;
+      arr[2] = +$('res2').value || 0;
+      arr[3] = +$('res3').value || 0;
+      arr[4] = +$('res4').value || 0;
+      arr[5] = +$('res5').value || 0;
+      arr[6] = +$('res6').value || 0;
+      arr[7] = computedFreeExp(s.DLs);
+      arr[8] = computedGrowth(s.UNLOCKED_PETS);
+      arr[9] = +$('res9').value || 0;
+      return arr;
+    }
+    function writeResourcesToGrid(list){
+      if(!Array.isArray(list) || list.length<10) return;
+      $('res0').value = list[0] ?? 0;
+      $('res1').value = list[1] ?? 0;
+      $('res2').value = list[2] ?? 0;
+      $('res3').value = list[3] ?? 0;
+      $('res4').value = list[4] ?? 0;
+      $('res5').value = list[5] ?? 0;
+      $('res6').value = list[6] ?? 0;
+      $('res9').value = list[9] ?? 0;
+      updateComputed();
+    }
+
+    function getVectorsFromTextareas(vars){
+      return {
+        currentLevels: parseCSVInts($('currentLevels').value, vars),
+        resourceCounts: parseCSVNums($('resourceCounts').value, vars),
+        upgradePath: parseCSVInts($('upgradePath').value, vars),
+        busyTimesStart: parseCSVNums($('busyTimesStart').value, vars),
+        busyTimesEnd: parseCSVNums($('busyTimesEnd').value, vars),
+      };
+    }
+
+    function gather(){
+      const s = getScalars();
+      const vars = { DLs: s.DLs, UNLOCKED_PETS: s.UNLOCKED_PETS };
+
+      const rc = readResourcesFromGrid();
+      const vecs = getVectorsFromTextareas(vars);
+      vecs.resourceCounts = rc;
+
+      return Object.assign({}, s, vecs);
+    }
+
+    function populate(data){
+      function set(id, v){ const el = $(id); if(el.type==='checkbox') el.checked=!!v; else el.value = v; }
+      set('EVENT_DURATION_DAYS', data.EVENT_DURATION_DAYS ?? 11);
+      set('EVENT_DURATION_HOURS', data.EVENT_DURATION_HOURS ?? 1);
+      set('EVENT_DURATION_MINUTES', data.EVENT_DURATION_MINUTES ?? 0);
+      set('EVENT_DURATION_SECONDS', data.EVENT_DURATION_SECONDS ?? 0);
+      set('UNLOCKED_PETS', data.UNLOCKED_PETS ?? 38);
+      set('DLs', data.DLs ?? 1009);
+      set('outputInterval', data.outputInterval ?? 5000);
+      set('EVENT_CURRENCY_WEIGHT', data.EVENT_CURRENCY_WEIGHT ?? 0.001);
+      set('FREE_EXP_WEIGHT', data.FREE_EXP_WEIGHT ?? 0.00006);
+      set('PET_STONES_WEIGHT', data.PET_STONES_WEIGHT ?? 0.000045);
+      set('GROWTH_WEIGHT', data.GROWTH_WEIGHT ?? 0.00007);
+      set('isFullPath', data.isFullPath ?? true);
+      set('allowSpeedUpgrades', data.allowSpeedUpgrades ?? true);
+      set('runOptimization', data.runOptimization ?? true);
+
+      $('currentLevels').value = (data.currentLevels||[]).join(', ');
+      $('resourceCounts').value = (data.resourceCounts||[]).join(', ');
+      $('upgradePath').value = (data.upgradePath||[]).join(', ');
+      $('busyTimesStart').value = (data.busyTimesStart||[]).join(', ');
+      $('busyTimesEnd').value = (data.busyTimesEnd||[]).join(', ');
+
+      if (Array.isArray(data.resourceCounts) && data.resourceCounts.length>=10) {
+        writeResourcesToGrid(data.resourceCounts);
+      } else {
+        writeResourcesToGrid([95000,850000,267500,72400,130260,54750,3339,0,0,447]);
+      }
+
+      updatePathPreview();
+      syncToGrids();
+      updateComputed();
+    }
+
+    function setStatus(msg, ok){
+      const el = $('status');
+      el.textContent = msg;
+      el.className = ok? 'ok' : 'danger';
+    }
+
+    const weekdayOrder = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+
+    function parseHHMM(s){
+      s = s.trim();
+      if(!s) return null;
+      const parts = s.split(':');
+      let h = 0, m = 0;
+      if(parts.length===1){ h = parseInt(parts[0],10); m = 0; }
+      else if(parts.length===2){ h = parseInt(parts[0],10); m = parseInt(parts[1],10); }
+      else return null;
+      if(isNaN(h)||isNaN(m)||h<0||h>24||m<0||m>=60) return null;
+      if(h===24 && m!==0) return null;
+      return h*60+m;
+    }
+
+    function parseIntervals(text){
+      if(!text || !text.trim()) return [];
+      return text.split(',').map(function(seg){
+        const p = seg.split('-');
+        if(p.length!==2) return null;
+        const s = parseHHMM(p[0]);
+        const e = parseHHMM(p[1]);
+        if(s==null || e==null) throw new Error('Bad interval: '+seg.trim());
+        return [s,e];
+      }).filter(function(x){return !!x;});
+    }
+
+    function totalHours(){
+      const s = getScalars();
+      return s.EVENT_DURATION_DAYS*24 + s.EVENT_DURATION_HOURS + s.EVENT_DURATION_MINUTES/60 + s.EVENT_DURATION_SECONDS/3600;
+    }
+
+    function generateBusyFromSchedule(){
+      const radios = document.querySelectorAll('input[name="schedmode"]');
+      var mode = 'daily';
+      for(var i=0;i<schedRadios.length;i++){ if(schedRadios[i].checked) mode = schedRadios[i].value; }
+      const startW = $('startWeekday').value;
+      const startIndex = weekdayOrder.indexOf(startW);
+      const T = totalHours();
+      const daysSpan = Math.ceil(T/24);
+
+      const collapse = $('collapseOvernights').checked;
+
+      const perDay = {};
+      if(mode==='daily'){
+        const arr = parseIntervals($('dailyIntervals').value);
+        for(var w=0;w<weekdayOrder.length;w++) perDay[weekdayOrder[w]] = arr;
+      } else {
+        perDay.Mon = parseIntervals($('monI').value);
+        perDay.Tue = parseIntervals($('tueI').value);
+        perDay.Wed = parseIntervals($('wedI').value);
+        perDay.Thu = parseIntervals($('thuI').value);
+        perDay.Fri = parseIntervals($('friI').value);
+        perDay.Sat = parseIntervals($('satI').value);
+        perDay.Sun = parseIntervals($('sunI').value);
+      }
+
+      const starts=[]; const ends=[];
+
+      for(let d=0; d<daysSpan; d++){
+        const w = weekdayOrder[(startIndex + d)%7];
+        const intervals = perDay[w] || [];
+        for(let k=0;k<intervals.length;k++){
+          const sMin = intervals[k][0], eMin = intervals[k][1];
+          if(eMin > sMin){
+            let sh = d*24 + sMin/60;
+            let eh = d*24 + eMin/60;
+            if (sh < T && eh > 0){
+              if (sh < 0) sh = 0; if (eh > T) eh = T;
+              if (eh>sh){ starts.push(+sh.toFixed(3)); ends.push(+eh.toFixed(3)); }
+            }
+          } else if (eMin !== sMin){
+            if (collapse){
+              let sh = d*24 + sMin/60;
+              let eh = d*24 + 24 + eMin/60;
+              if (sh < T && eh > 0){
+                if (sh < 0) sh = 0; if (eh > T) eh = T;
+                if (eh>sh){ starts.push(+sh.toFixed(3)); ends.push(+eh.toFixed(3)); }
+              }
+            } else {
+              let sh1 = d*24 + sMin/60;
+              let eh1 = d*24 + 24;
+              let sh2 = (d+1)*24 + 0;
+              let eh2 = (d+1)*24 + eMin/60;
+              if (sh1 < T){ let a = sh1<0?0:sh1; let b = eh1>T?T:eh1; if (b>a){ starts.push(+a.toFixed(3)); ends.push(+b.toFixed(3)); } }
+              if (sh2 < T){ let a = sh2<0?0:sh2; let b = eh2>T?T:eh2; if (b>a){ starts.push(+a.toFixed(3)); ends.push(+b.toFixed(3)); } }
+            }
+          }
+        }
+      }
+
+      $('busyTimesStart').value = starts.join(', ');
+      $('busyTimesEnd').value   = ends.join(', ');
+      setStatus('Generated busy arrays ('+starts.length+' intervals).', true);
+    }
+
+    const resourceNames = ['Tomb','Bat','Ghost','Witch_Book','Witch_Soup','Eye','PET_STONES','FREE_EXP','GROWTH','Black_Cat'];
+
+    function buildLegend(){
+      const frag = [];
+      for(let i=0;i<10;i++) frag.push('<span class="pill">'+i+' = '+resourceNames[i]+' (Level)</span>');
+      for(let i=0;i<10;i++) frag.push('<span class="pill">'+(10+i)+' = '+resourceNames[i]+' (Speed)</span>');
+      frag.push('<span class="pill">20 = Complete</span>');
+      $('legend').innerHTML = frag.join(' ');
+    }
+
+    function buildUpgradeGrids(){
+      const lg = $('levelGrid'); const sg = $('speedGrid');
+      lg.innerHTML=''; sg.innerHTML='';
+      for(let i=0;i<10;i++){
+        const wrap = document.createElement('div');
+        wrap.innerHTML = '<label class="muted" style="display:block;font-size:.85rem;margin-bottom:4px)">'+i+' — '+resourceNames[i]+' (Level)</label>'+
+                         '<input id="lvl'+i+'" type="number" value="0">';
+        lg.appendChild(wrap);
+      }
+      for(let i=0;i<10;i++){
+        const idx=10+i; const wrap = document.createElement('div');
+        wrap.innerHTML = '<label class="muted" style="display:block;font-size:.85rem;margin-bottom:4px)">'+idx+' — '+resourceNames[i]+' (Speed)</label>'+
+                         '<input id="spd'+idx+'" type="number" value="0">';
+        sg.appendChild(wrap);
+      }
+    }
+
+    function syncFromGrids(){
+      const levels=[]; const speeds=[];
+      for(let i=0;i<10;i++) levels.push( +$('lvl'+i).value || 0 );
+      for(let i=0;i<10;i++) speeds.push( +$('spd'+(10+i)).value || 0 );
+      const dummy = +$('dummyLevel').value || 0;
+      $('currentLevels').value = levels.concat(speeds).concat([dummy]).join(', ');
+      setStatus('Synced grids → currentLevels CSV.', true);
+    }
+
+    function syncToGrids(){
+      const s = getScalars();
+      const vars = { DLs: s.DLs, UNLOCKED_PETS: s.UNLOCKED_PETS };
+      var arr = [];
+      try{ arr = parseCSVInts($('currentLevels').value, vars); }catch(e){ arr = []; }
+      for(let i=0;i<10;i++) $('lvl'+i).value = (arr[i] != null ? arr[i] : 0);
+      for(let i=0;i<10;i++) $('spd'+(10+i)).value = (arr[10+i] != null ? arr[10+i] : 0);
+      $('dummyLevel').value = (arr[20] != null ? arr[20] : 0);
+    }
+
+    function updatePathPreview(){
+      const s = getScalars();
+      const vars = { DLs: s.DLs, UNLOCKED_PETS: s.UNLOCKED_PETS };
+      var nums=[]; try{ nums = parseCSVInts($('upgradePath').value, vars); }catch(e){ nums=[]; }
+      const names = nums.map(function(n){
+        if(n===20) return 'Complete(20)';
+        if(n>=0 && n<10) return resourceNames[n]+'(L)';
+        if(n>=10 && n<20) return resourceNames[n-10]+'(S)';
+        return '?' + n;
+      });
+      $('pathPreview').textContent = names.join(', ');
+    }
+
+    function syncFromResourcesGrid(){
+      const arr = readResourcesFromGrid();
+      $('resourceCounts').value = arr.join(', ');
+      setStatus('Synced Resources → resourceCounts CSV.', true);
+    }
+
+    function syncToResourcesGrid(){
+      const s = getScalars();
+      const vars = { DLs: s.DLs, UNLOCKED_PETS: s.UNLOCKED_PETS };
+      var arr = [];
+      try{ arr = parseCSVNums($('resourceCounts').value, vars); }catch(e){ arr = []; }
+      if (arr.length>=10) writeResourcesToGrid(arr);
+      else setStatus('resourceCounts CSV is empty or too short; filled defaults.', false);
+    }
+
+    function maybeAutoGenerateBusy(){
+      const auto = $('autoApplySchedule').checked;
+      const hasSched = $('dailyIntervals').value.trim() || $('monI').value.trim()||$('tueI').value.trim()||$('wedI').value.trim()||$('thuI').value.trim()||$('friI').value.trim()||$('satI').value.trim()||$('sunI').value.trim();
+      if(auto && hasSched){ generateBusyFromSchedule(); }
+    }
+
+    function saveJSON(){
+      try{
+        maybeAutoGenerateBusy();
+        const data = gather();
+        const blob = new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'config.json';
+        a.click();
+        URL.revokeObjectURL(a.href);
+        setStatus('Saved config.json', true);
+      }catch(e){ setStatus(e.message,false); }
+    }
+
+    function loadJSON(){
+      const inp = $('fileInput');
+      inp.onchange = function(){
+        const file = inp.files[0];
+        if(!file) return;
+        const reader = new FileReader();
+        reader.onload = function(){
+          try{
+            const data = JSON.parse(reader.result);
+            populate(data);
+            setStatus('Loaded '+file.name, true);
+          }catch(e){ setStatus('Invalid JSON: '+e.message,false); }
+        };
+        reader.readAsText(file);
+      };
+      inp.click();
+    }
+
+    $('saveBtn').addEventListener('click', saveJSON);
+    $('loadBtn').addEventListener('click', loadJSON);
+    $('genBusyBtn').addEventListener('click', generateBusyFromSchedule);
+    $('syncFromResources').addEventListener('click', syncFromResourcesGrid);
+    $('syncToResources').addEventListener('click', syncToResourcesGrid);
+    var schedRadios = document.querySelectorAll('input[name="schedmode"]');
+    for(var i=0;i<schedRadios.length;i++){
+      schedRadios[i].addEventListener('change', function(){
+        var daily = document.querySelector('input[name="schedmode"][value="daily"]').checked;
+        $('dailyBox').style.display = daily? 'grid':'none';
+        $('perDayBox').style.display = daily? 'none':'block';
+      });
+    }
+    $('upgradePath').addEventListener('input', updatePathPreview);
+    $('syncFromGrids').addEventListener('click', syncFromGrids);
+    $('syncToGrids').addEventListener('click', syncToGrids);
+    $('DLs').addEventListener('input', updateComputed);
+    $('UNLOCKED_PETS').addEventListener('input', updateComputed);
+
+    buildLegend();
+    buildUpgradeGrids();
+
+    populate({
+      currentLevels: [9,18,14, 7,5,11, 8,4,10, 6, 8,10,10, 7,6,10, 7,4,10, 6, 0],
+      resourceCounts: [95000,850000,267500, 72400,130260,54750, 3339, '1/((500+DLs)/5)', '1/(UNLOCKED_PETS/100)', 447].map(function(x){return typeof x==='string'?x: x;}),
+      upgradePath: [16,7,8,4,10,8,16,17,6,0,4,8,14,16,8,7,10,5,6,4,2,2,17,6,8,2,14,6,0,13,8,7,2,5,6,4,17,14,0,8,2,6,7,14,8,17,0,5,6,1,6,8,17,3,13,0,7,2,6,2,4,8,7,5,2,6,2,4,17,8,9,5,6,7,19,3,0,13,8,19,5,6,9,7,0,2,6,8,7,3,5,6,3,7,0,8,19,9,6,8,6,0,9,5,7,3,19,2,6,8,7,0,6,2,8,9,9,5,9,9,20],
+      busyTimesStart: [19,43,67,91,115,139,163,187,211,235,259],
+      busyTimesEnd:   [27,51,75,99,123,147,171,195,219,243,265]
+    });
+    updateComputed();
+  </script>
+</body>
+</html>

@@ -1,0 +1,3 @@
+C:/Users/Praedyth/Downloads/IdleOptimizerVS_fix_v5_1a/out/build/x64-Debug/CMakeFiles/IdleOptimizer.dir
+C:/Users/Praedyth/Downloads/IdleOptimizerVS_fix_v5_1a/out/build/x64-Debug/CMakeFiles/edit_cache.dir
+C:/Users/Praedyth/Downloads/IdleOptimizerVS_fix_v5_1a/out/build/x64-Debug/CMakeFiles/rebuild_cache.dir
