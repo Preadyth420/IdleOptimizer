@@ -1,0 +1,27 @@
+# Build artifacts and IDE
+/build/
+/out/
+/x64-*/
+.vs/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+*.ninja
+*.obj
+*.pdb
+*.ipdb
+*.iobj
+*.ilk
+*.exp
+*.lib
+*.dll
+*.exe
+*.log
+*.tmp
+*.manifest
+*.res
+
+# OS noise
+.DS_Store
+Thumbs.db
+desktop.ini
