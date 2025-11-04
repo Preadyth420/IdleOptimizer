@@ -2,12 +2,15 @@
 /build/
 /out/
 /x64-*/
+/build/
+/_deps/
 .vs/
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
 *.ninja
 *.obj
+*.exe
 *.pdb
 *.ipdb
 *.iobj
@@ -24,4 +27,6 @@ cmake_install.cmake
 # OS noise
 .DS_Store
 Thumbs.db
-desktop.ini
+desktop.iniCMakeCache.txt
+CMakeFiles/
+*.tlog

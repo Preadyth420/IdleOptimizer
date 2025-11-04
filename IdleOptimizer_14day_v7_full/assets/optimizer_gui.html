@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Upgrade Optimizer — Settings GUI (v7 — 14-day event)</title>
+  <title>Upgrade Optimizer — Settings GUI (v8 — 14-day event + Busy Schedule)</title>
   <style>
     :root { --bg:#0b0f14; --card:#121822; --ink:#e8f0ff; --muted:#9db0c9; --acc:#5cc8ff; }
     html,body{height:100%}
@@ -22,13 +22,20 @@
     .pill{display:inline-block;padding:.2rem .5rem;border:1px solid #2a3b53;border-radius:999px;margin:.1rem .2rem;font-size:.85rem;color:#cfe2ff}
     input, textarea{width:100%;box-sizing:border-box;background:#0b111a;color:var(--ink);border:1px solid #223048;border-radius:10px;padding:10px 12px;font-family:ui-monospace,Consolas,monospace}
     textarea{min-height:72px}
-    button{background:linear-gradient(180deg,#1c88ff,#1460ff);border:none;color:white;padding:10px 14px;border-radius:10px;font-weight:600;cursor:pointer}
+    button{background:linear-gradient(180deg,#1c88ff,#1460ff);border:none;color:white;padding:9px 14px;border-radius:10px;font-weight:600;cursor:pointer}
     button.secondary{background:#1a2331}
+    .split{display:flex;gap:8px;align-items:center}
+    .winRow{display:flex;gap:8px;margin:6px 0}
+    .winRow input{width:130px}
+    .dayWrap{border:1px dashed #2a3b53;border-radius:10px;padding:8px;margin:8px 0}
+    .dayHdr{display:flex;justify-content:space-between;align-items:center}
+    .mini{font-size:0.9rem;color:#adc4e2}
+    .preview{font-family:ui-monospace,Consolas,monospace;font-size:0.95rem;background:#0b111a;border:1px dashed #2a3b53;border-radius:8px;padding:8px;white-space:pre-wrap}
   </style>
 </head>
 <body>
   <div class="wrap">
-    <h1>Upgrade Optimizer — Settings GUI (v7 — 14-day event)</h1>
+    <h1>Upgrade Optimizer — Settings GUI (v8 — 14-day event + Busy Schedule)</h1>
     <div class="tabs">
       <div class="tab active" id="tabMainBtn">Main</div>
       <div class="tab" id="tabNamesBtn">Resource Names</div>
@@ -103,6 +110,32 @@
       </div>
 
       <div class="card">
+        <h2>Weekly Busy Schedule</h2>
+        <p class="muted">Define when you’re <b>busy</b> (cannot buy). We expand this across the whole event and write the arrays for you.</p>
+        <div style="display:flex;gap:14px;align-items:center;margin:8px 0">
+          <label><input type="radio" name="schedMode" id="modeDaily" checked> Same times every day</label>
+          <label><input type="radio" name="schedMode" id="modePerDay"> Custom per-day (Mon–Sun)</label>
+        </div>
+
+        <div id="dailyBox" class="dayWrap">
+          <div class="dayHdr"><b>Daily windows</b> <button class="secondary" id="btnAddDaily">+ Add window</button></div>
+          <div id="dailyList"></div>
+        </div>
+
+        <div id="perDayBox" class="hidden">
+          <div class="mini">Add one or more windows per day. 24-hour times like 19:00–03:00 are fine (we’ll split overnight).</div>
+          <div id="daysContainer"></div>
+        </div>
+
+        <div class="split" style="margin-top:10px">
+          <button id="btnGenerateBusy">Generate Busy Arrays</button>
+          <button class="secondary" id="btnClearBusy">Clear</button>
+        </div>
+        <div class="mini" style="margin-top:8px">Preview → we’ll also fill the CSV boxes below.</div>
+        <div id="busyPreview" class="preview" style="margin-top:6px"></div>
+      </div>
+
+      <div class="card">
         <h2>Upgrades — levels & speeds</h2>
         <div id="legend" class="muted" style="margin-bottom:8px"></div>
         <h3>Starting Levels</h3>
@@ -118,7 +151,7 @@
 
       <div class="card">
         <h2>Vectors (CSV)</h2>
-        <div class="row"><label>currentLevels</label><textarea id="currentLevels">0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0, 0</textarea></div>
+        <div class="row"><label>currentLevels</label><textarea id="currentLevels">0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0</textarea></div>
         <div class="row"><label>resourceCounts</label><textarea id="resourceCounts">0, 500000, 0, 0, 0, 0, 0, 1, 1, 0</textarea></div>
         <div class="row"><label>upgradePath</label><textarea id="upgradePath" placeholder="(optional)"></textarea></div>
         <div class="row"><label>busyTimesStart (hours)</label><textarea id="busyTimesStart" placeholder=""></textarea></div>
@@ -143,244 +176,410 @@
   </div>
 
   <script>
-    function $(id){ return document.getElementById(id); }
-    let resourceNames = ['Tomb','Bat','Ghost','Witch_Book','Witch_Soup','Eye','PET_STONES','FREE_EXP','GROWTH','Black_Cat'];
+  function $(id){ return document.getElementById(id); }
 
-    const tabMainBtn = $('tabMainBtn'), tabNamesBtn = $('tabNamesBtn');
-    const tabMain = $('tabMain'), tabNames = $('tabNames');
-    tabMainBtn.onclick = () => { tabMainBtn.classList.add('active'); tabNamesBtn.classList.remove('active'); tabMain.classList.remove('hidden'); tabNames.classList.add('hidden'); };
-    tabNamesBtn.onclick = () => { tabNamesBtn.classList.add('active'); tabMainBtn.classList.remove('active'); tabNames.classList.remove('hidden'); tabMain.classList.add('hidden'); };
+  // ---- names / tabs ----
+  let resourceNames = ['Tomb','Bat','Ghost','Witch_Book','Witch_Soup','Eye','PET_STONES','FREE_EXP','GROWTH','Black_Cat'];
+  const tabMainBtn = $('tabMainBtn'), tabNamesBtn = $('tabNamesBtn');
+  const tabMain = $('tabMain'), tabNames = $('tabNames');
+  tabMainBtn.onclick = () => { tabMainBtn.classList.add('active'); tabNamesBtn.classList.remove('active'); tabMain.classList.remove('hidden'); tabNames.classList.add('hidden'); };
+  tabNamesBtn.onclick = () => { tabNamesBtn.classList.add('active'); tabMainBtn.classList.remove('active'); tabNames.classList.remove('hidden'); tabMain.classList.add('hidden'); };
 
-    function buildNamesGrid(){
-      const ng = $('namesGrid'); ng.innerHTML='';
-      for(let i=0;i<10;i++){
-        const wrap = document.createElement('div');
-        wrap.innerHTML = `<label class="muted" style="display:block;font-size:.85rem;margin-bottom:4px">${i} — Name</label>
-                          <input id="name${i}" type="text" value="${resourceNames[i]}">`;
-        ng.appendChild(wrap);
-      }
-      for(let i=0;i<10;i++){
-        const input = document.getElementById('name'+i);
-        input.addEventListener('input', () => {
-          resourceNames[i] = input.value || ('Res'+i);
-          refreshResourceLabels();
-          buildUpgradeGrids();
-        });
-      }
+  function buildNamesGrid(){
+    const ng = $('namesGrid'); ng.innerHTML='';
+    for(let i=0;i<10;i++){
+      const wrap = document.createElement('div');
+      wrap.innerHTML = `<label class="muted" style="display:block;font-size:.85rem;margin-bottom:4px">${i} — Name</label>
+                        <input id="name${i}" type="text" value="${resourceNames[i]}">`;
+      ng.appendChild(wrap);
     }
-    function refreshResourceLabels(){
-      $('labRes0').textContent = `0 — ${resourceNames[0]}`;
-      $('labRes1').textContent = `1 — ${resourceNames[1]}`;
-      $('labRes2').textContent = `2 — ${resourceNames[2]}`;
-      $('labRes3').textContent = `3 — ${resourceNames[3]}`;
-      $('labRes4').textContent = `4 — ${resourceNames[4]}`;
-      $('labRes5').textContent = `5 — ${resourceNames[5]}`;
-      $('labRes6').textContent = `6 — ${resourceNames[6]}`;
-      $('labRes9').textContent = `9 — ${resourceNames[9]}`;
-      buildLegend();
-    }
-    function buildLegend(){
-      const frag = [];
-      for(let i=0;i<10;i++) frag.push('<span class="pill">'+i+' = '+resourceNames[i]+' (Level)</span>');
-      for(let i=0;i<10;i++) frag.push('<span class="pill">'+(10+i)+' = '+resourceNames[i]+' (Speed)</span>');
-      frag.push('<span class="pill">20 = Complete</span>');
-      document.getElementById('legend').innerHTML = frag.join(' ');
-    }
-    function buildUpgradeGrids(){
-      const lg = document.getElementById('levelGrid'); const sg = document.getElementById('speedGrid');
-      lg.innerHTML=''; sg.innerHTML='';
-      for(let i=0;i<10;i++){
-        const wrap = document.createElement('div');
-        wrap.innerHTML = '<label class="muted" style="display:block;font-size:.85rem;margin-bottom:4px)">'+i+' — '+resourceNames[i]+' (Level)</label>'+
-                         '<input id="lvl'+i+'" type="number" value="0">';
-        lg.appendChild(wrap);
-      }
-      for(let i=0;i<10;i++){
-        const idx=10+i; const wrap = document.createElement('div');
-        wrap.innerHTML = '<label class="muted" style="display:block;font-size:.85rem;margin-bottom:4px)">'+idx+' — '+resourceNames[i]+' (Speed)</label>'+
-                         '<input id="spd'+idx+'" type="number" value="0">';
-        sg.appendChild(wrap);
-      }
-    }
-
-    function isAllowedExpr(expr){
-      const extra = '0123456789+-*/()., ';
-      for(let i=0;i<expr.length;i++){
-        const c = expr[i];
-        const code = c.charCodeAt(0);
-        const isLetter = (code>=65 && code<=90) || (code>=97 && code<=122) || c==='_' ;
-        if (extra.indexOf(c)===-1 && !isLetter) return false;
-      }
-      return true;
-    }
-    function evalExpr(expr, vars){
-      const keys = Object.keys(vars);
-      const vals = Object.values(vars);
-      const fn = new Function(keys.join(','), 'return ('+expr+');');
-      return fn.apply(null, vals);
-    }
-    function parseCSVInts(text, vars){
-      if(!text.trim()) return [];
-      return text.split(',').map(s=>{
-        const t = s.trim(); if(!t) return null;
-        const v = isAllowedExpr(t) ? evalExpr(t, vars) : t;
-        const n = Number(v);
-        if(!isFinite(n)) throw new Error('Invalid int: '+t);
-        return Math.trunc(n);
-      }).filter(x=>x!==null);
-    }
-    function parseCSVNums(text, vars){
-      if(!text.trim()) return [];
-      return text.split(',').map(s=>{
-        const t = s.trim(); if(!t) return null;
-        const v = isAllowedExpr(t) ? evalExpr(t, vars) : t;
-        const n = Number(v);
-        if(!isFinite(n)) throw new Error('Invalid number: '+t);
-        return n;
-      }).filter(x=>x!==null);
-    }
-
-    function getScalars(){
-      return {
-        EVENT_DURATION_DAYS: +document.getElementById('EVENT_DURATION_DAYS').value,
-        EVENT_DURATION_HOURS: +document.getElementById('EVENT_DURATION_HOURS').value,
-        EVENT_DURATION_MINUTES: +document.getElementById('EVENT_DURATION_MINUTES').value,
-        EVENT_DURATION_SECONDS: +document.getElementById('EVENT_DURATION_SECONDS').value,
-        UNLOCKED_PETS: +document.getElementById('UNLOCKED_PETS').value,
-        DLs: +document.getElementById('DLs').value,
-        outputInterval: +document.getElementById('outputInterval').value,
-        EVENT_CURRENCY_WEIGHT: +document.getElementById('EVENT_CURRENCY_WEIGHT').value,
-        FREE_EXP_WEIGHT: +document.getElementById('FREE_EXP_WEIGHT').value,
-        PET_STONES_WEIGHT: +document.getElementById('PET_STONES_WEIGHT').value,
-        GROWTH_WEIGHT: +document.getElementById('GROWTH_WEIGHT').value,
-        isFullPath: document.getElementById('isFullPath').checked,
-        allowSpeedUpgrades: document.getElementById('allowSpeedUpgrades').checked,
-        runOptimization: document.getElementById('runOptimization').checked,
-      };
-    }
-    function computedFreeExp(DLs){ return 1/((500+DLs)/5); }
-    function computedGrowth(UNLOCKED_PETS){ return 1/(UNLOCKED_PETS/100); }
-    function updateComputed(){
-      document.getElementById('freeExpVal').textContent = computedFreeExp(+document.getElementById('DLs').value||0).toFixed(6);
-      document.getElementById('growthVal').textContent  = computedGrowth(+document.getElementById('UNLOCKED_PETS').value||0).toFixed(6);
-    }
-
-    function readResourcesFromGrid(){
-      const arr = new Array(10);
-      arr[0] = +document.getElementById('res0').value || 0;
-      arr[1] = +document.getElementById('res1').value || 0;
-      arr[2] = +document.getElementById('res2').value || 0;
-      arr[3] = +document.getElementById('res3').value || 0;
-      arr[4] = +document.getElementById('res4').value || 0;
-      arr[5] = +document.getElementById('res5').value || 0;
-      arr[6] = +document.getElementById('res6').value || 0;
-      arr[7] = +document.getElementById('res7').value || 1;
-      arr[8] = +document.getElementById('res8').value || 1;
-      arr[9] = +document.getElementById('res9').value || 0;
-      return arr;
-    }
-    function writeResourcesToGrid(list){
-      if(!Array.isArray(list) || list.length<10) return;
-      document.getElementById('res0').value = list[0] ?? 0;
-      document.getElementById('res1').value = list[1] ?? 0;
-      document.getElementById('res2').value = list[2] ?? 0;
-      document.getElementById('res3').value = list[3] ?? 0;
-      document.getElementById('res4').value = list[4] ?? 0;
-      document.getElementById('res5').value = list[5] ?? 0;
-      document.getElementById('res6').value = list[6] ?? 0;
-      document.getElementById('res7').value = list[7] ?? 1;
-      document.getElementById('res8').value = list[8] ?? 1;
-      document.getElementById('res9').value = list[9] ?? 0;
-      updateComputed();
-    }
-
-    function gather(){
-      const s = getScalars();
-      const vars = { DLs: s.DLs, UNLOCKED_PETS: s.UNLOCKED_PETS };
-      const res = readResourcesFromGrid();
-      const currentLevels = parseCSVInts(document.getElementById('currentLevels').value, vars);
-      const upgradePath = parseCSVInts(document.getElementById('upgradePath').value, vars);
-      const bts = parseCSVNums(document.getElementById('busyTimesStart').value, vars);
-      const bte = parseCSVNums(document.getElementById('busyTimesEnd').value, vars);
-      const names = [];
-      for(let i=0;i<10;i++){ names.push( document.getElementById('name'+i).value || ('Res'+i) ); }
-      return Object.assign({}, s, {
-        currentLevels, resourceCounts: res, upgradePath,
-        busyTimesStart: bts, busyTimesEnd: bte,
-        resourceNames: names
+    for(let i=0;i<10;i++){
+      const input = document.getElementById('name'+i);
+      input.addEventListener('input', () => {
+        resourceNames[i] = input.value || ('Res'+i);
+        refreshResourceLabels();
+        buildUpgradeGrids();
       });
     }
-    function populate(data){
-      function set(id, v){ const el = document.getElementById(id); if(el && el.type==='checkbox') el.checked=!!v; else if(el) el.value = v; }
-      set('EVENT_DURATION_DAYS', data.EVENT_DURATION_DAYS ?? 14);
-      set('EVENT_DURATION_HOURS', data.EVENT_DURATION_HOURS ?? 0);
-      set('EVENT_DURATION_MINUTES', data.EVENT_DURATION_MINUTES ?? 0);
-      set('EVENT_DURATION_SECONDS', data.EVENT_DURATION_SECONDS ?? 0);
-      set('UNLOCKED_PETS', data.UNLOCKED_PETS ?? 100);
-      set('DLs', data.DLs ?? 0);
-      set('outputInterval', data.outputInterval ?? 5000);
-      set('EVENT_CURRENCY_WEIGHT', data.EVENT_CURRENCY_WEIGHT ?? 0.001);
-      set('FREE_EXP_WEIGHT', data.FREE_EXP_WEIGHT ?? 0.00006);
-      set('PET_STONES_WEIGHT', data.PET_STONES_WEIGHT ?? 0.000045);
-      set('GROWTH_WEIGHT', data.GROWTH_WEIGHT ?? 0.00007);
-      set('isFullPath', data.isFullPath ?? true);
-      set('allowSpeedUpgrades', data.allowSpeedUpgrades ?? true);
-      set('runOptimization', data.runOptimization ?? true);
+  }
+  function refreshResourceLabels(){
+    $('labRes0').textContent = `0 — ${resourceNames[0]}`;
+    $('labRes1').textContent = `1 — ${resourceNames[1]}`;
+    $('labRes2').textContent = `2 — ${resourceNames[2]}`;
+    $('labRes3').textContent = `3 — ${resourceNames[3]}`;
+    $('labRes4').textContent = `4 — ${resourceNames[4]}`;
+    $('labRes5').textContent = `5 — ${resourceNames[5]}`;
+    $('labRes6').textContent = `6 — ${resourceNames[6]}`;
+    $('labRes9').textContent = `9 — ${resourceNames[9]}`;
+    buildLegend();
+  }
+  function buildLegend(){
+    const frag = [];
+    for(let i=0;i<10;i++) frag.push('<span class="pill">'+i+' = '+resourceNames[i]+' (Level)</span>');
+    for(let i=0;i<10;i++) frag.push('<span class="pill">'+(10+i)+' = '+resourceNames[i]+' (Speed)</span>');
+    frag.push('<span class="pill">20 = Complete</span>');
+    document.getElementById('legend').innerHTML = frag.join(' ');
+  }
+  function buildUpgradeGrids(){
+    const lg = document.getElementById('levelGrid'); const sg = document.getElementById('speedGrid');
+    lg.innerHTML=''; sg.innerHTML='';
+    for(let i=0;i<10;i++){
+      const wrap = document.createElement('div');
+      wrap.innerHTML = '<label class="muted" style="display:block;font-size:.85rem;margin-bottom:4px)">'+i+' — '+resourceNames[i]+' (Level)</label>'+
+                       '<input id="lvl'+i+'" type="number" value="0">';
+      lg.appendChild(wrap);
+    }
+    for(let i=0;i<10;i++){
+      const idx=10+i; const wrap = document.createElement('div');
+      wrap.innerHTML = '<label class="muted" style="display:block;font-size:.85rem;margin-bottom:4px)">'+idx+' — '+resourceNames[i]+' (Speed)</label>'+
+                       '<input id="spd'+idx+'" type="number" value="0">';
+      sg.appendChild(wrap);
+    }
+  }
 
-      if (Array.isArray(data.resourceNames) && data.resourceNames.length>=10){
-        resourceNames = data.resourceNames.slice(0,10);
+  // ---- helpers ----
+  function setStatus(msg, ok){
+    const el = document.getElementById('status');
+    el.textContent = msg;
+    el.style.color = ok? '#b1ffb1' : '#ff9b9b';
+  }
+  function isAllowedExpr(expr){
+    const extra = '0123456789+-*/()., ';
+    for(let i=0;i<expr.length;i++){
+      const c = expr[i];
+      const code = c.charCodeAt(0);
+      const isLetter = (code>=65 && code<=90) || (code>=97 && code<=122) || c==='_' ;
+      if (extra.indexOf(c)===-1 && !isLetter) return false;
+    }
+    return true;
+  }
+  function evalExpr(expr, vars){
+    const keys = Object.keys(vars);
+    const vals = Object.values(vars);
+    const fn = new Function(keys.join(','), 'return ('+expr+');');
+    return fn.apply(null, vals);
+  }
+  function parseCSVInts(text, vars){
+    if(!text.trim()) return [];
+    return text.split(',').map(s=>{
+      const t = s.trim(); if(!t) return null;
+      const v = isAllowedExpr(t) ? evalExpr(t, vars) : t;
+      const n = Number(v);
+      if(!isFinite(n)) throw new Error('Invalid int: '+t);
+      return Math.trunc(n);
+    }).filter(x=>x!==null);
+  }
+  function parseCSVNums(text, vars){
+    if(!text.trim()) return [];
+    return text.split(',').map(s=>{
+      const t = s.trim(); if(!t) return null;
+      const v = isAllowedExpr(t) ? evalExpr(t, vars) : t;
+      const n = Number(v);
+      if(!isFinite(n)) throw new Error('Invalid number: '+t);
+      return n;
+    }).filter(x=>x!==null);
+  }
+
+  // ---- scalars ----
+  function getScalars(){
+    return {
+      EVENT_DURATION_DAYS: +$('EVENT_DURATION_DAYS').value,
+      EVENT_DURATION_HOURS: +$('EVENT_DURATION_HOURS').value,
+      EVENT_DURATION_MINUTES: +$('EVENT_DURATION_MINUTES').value,
+      EVENT_DURATION_SECONDS: +$('EVENT_DURATION_SECONDS').value,
+      UNLOCKED_PETS: +$('UNLOCKED_PETS').value,
+      DLs: +$('DLs').value,
+      outputInterval: +$('outputInterval').value,
+      EVENT_CURRENCY_WEIGHT: +$('EVENT_CURRENCY_WEIGHT').value,
+      FREE_EXP_WEIGHT: +$('FREE_EXP_WEIGHT').value,
+      PET_STONES_WEIGHT: +$('PET_STONES_WEIGHT').value,
+      GROWTH_WEIGHT: +$('GROWTH_WEIGHT').value,
+      isFullPath: $('isFullPath').checked,
+      allowSpeedUpgrades: $('allowSpeedUpgrades').checked,
+      runOptimization: $('runOptimization').checked,
+    };
+  }
+  function computedFreeExp(DLs){ return 1/((500+DLs)/5); }
+  function computedGrowth(UNLOCKED_PETS){ return 1/(UNLOCKED_PETS/100); }
+  function updateComputed(){
+    $('freeExpVal').textContent = computedFreeExp(+$('DLs').value||0).toFixed(6);
+    $('growthVal').textContent  = computedGrowth(+$('UNLOCKED_PETS').value||0).toFixed(6);
+  }
+
+  // ---- resources (fields <-> CSV) ----
+  function readResourcesFromGrid(){
+    const s = getScalars();
+    const arr = new Array(10);
+    arr[0] = +$('res0').value || 0;
+    arr[1] = +$('res1').value || 0;
+    arr[2] = +$('res2').value || 0;
+    arr[3] = +$('res3').value || 0;
+    arr[4] = +$('res4').value || 0;
+    arr[5] = +$('res5').value || 0;
+    arr[6] = +$('res6').value || 0;
+    arr[7] = $('overrideFreeExp').checked ? (+$('res7').value || 0) : computedFreeExp(s.DLs);
+    arr[8] = $('overrideGrowth').checked ? (+$('res8').value || 0) : computedGrowth(s.UNLOCKED_PETS);
+    arr[9] = +$('res9').value || 0;
+    return arr;
+  }
+  function writeResourcesToGrid(list){
+    if(!Array.isArray(list) || list.length<10) return;
+    $('res0').value = list[0] ?? 0;
+    $('res1').value = list[1] ?? 0;
+    $('res2').value = list[2] ?? 0;
+    $('res3').value = list[3] ?? 0;
+    $('res4').value = list[4] ?? 0;
+    $('res5').value = list[5] ?? 0;
+    $('res6').value = list[6] ?? 0;
+    $('res7').value = list[7] ?? 1;
+    $('res8').value = list[8] ?? 1;
+    $('res9').value = list[9] ?? 0;
+    updateComputed();
+  }
+
+  // ---- levels (grids <-> CSV) ----
+  function readCurrentLevelsFromGrids(){
+    const out = new Array(21).fill(0);
+    for(let i=0;i<10;i++){ out[i] = Math.trunc(+$('lvl'+i).value || 0); }
+    for(let i=0;i<10;i++){ out[10+i] = Math.trunc(+$('spd'+(10+i)).value || 0); }
+    out[20] = Math.trunc(+$('dummyLevel').value || 0);
+    return out;
+  }
+  function writeCurrentLevelsToGrids(list){
+    if(!Array.isArray(list) || list.length<21) return;
+    for(let i=0;i<10;i++){ $('lvl'+i).value = list[i] ?? 0; }
+    for(let i=0;i<10;i++){ $('spd'+(10+i)).value = list[10+i] ?? 0; }
+    $('dummyLevel').value = list[20] ?? 0;
+  }
+
+  // ---- weekly busy schedule (wrap overnight) ----
+  const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  function addWindowRow(container, start='19:00', end='03:00'){
+    const row = document.createElement('div');
+    row.className = 'winRow';
+    row.innerHTML = '<input type="time" value="'+start+'"> <span>to</span> <input type="time" value="'+end+'"> <button class="secondary">Remove</button>';
+    row.querySelector('button').onclick = () => row.remove();
+    container.appendChild(row);
+  }
+  function buildDailyBox(){
+    $('dailyList').innerHTML = '';
+    addWindowRow($('dailyList'), '19:00', '03:00');
+    $('btnAddDaily').onclick = () => addWindowRow($('dailyList'), '00:00', '00:00');
+  }
+  function buildPerDayBox(){
+    const dc = $('daysContainer'); dc.innerHTML='';
+    for(let i=0;i<7;i++){
+      const wrap = document.createElement('div');
+      wrap.className = 'dayWrap';
+      wrap.innerHTML = '<div class="dayHdr"><b>'+days[i]+'</b> <button class="secondary">+ Add window</button></div><div class="mini">No windows yet</div><div class="slots"></div>';
+      const btn = wrap.querySelector('button');
+      const mini = wrap.querySelector('.mini');
+      const slots = wrap.querySelector('.slots');
+      btn.onclick = () => { addWindowRow(slots,'19:00','03:00'); mini.classList.add('hidden'); };
+      dc.appendChild(wrap);
+    }
+  }
+  function parseTime(t){ // "HH:MM" -> decimal hours
+    if (!t || t.indexOf(':')===-1) return NaN;
+    const [H,M] = t.split(':').map(x=>+x);
+    if (isNaN(H)||isNaN(M)) return NaN;
+    return H + (M/60);
+  }
+  function mergeIntervals(pairs, totalHours){
+    if(!pairs.length) return {starts:[], ends:[]};
+    pairs.sort((a,b)=>a[0]-b[0]);
+    const merged = [pairs[0].slice()];
+    for(let i=1;i<pairs.length;i++){
+      const [s,e] = pairs[i];
+      const last = merged[merged.length-1];
+      if (s <= last[1] + 1e-9) last[1] = Math.max(last[1], e);
+      else merged.push([s,e]);
+    }
+    // clamp & round
+    const S = [], E = [];
+    for (const [s,e] of merged){
+      if (e <= 0 || s >= totalHours) continue;
+      S.push(+Math.max(0, Math.min(totalHours, s)).toFixed(3));
+      E.push(+Math.max(0, Math.min(totalHours, e)).toFixed(3));
+    }
+    return {starts:S, ends:E};
+  }
+  function generateBusyArrays(){
+    const eventDays = Math.max(1, +$('EVENT_DURATION_DAYS').value || 14);
+    const totalHours = eventDays * 24;
+    const pairs = [];
+
+    function addWrapped(dayIdx, sh, eh){
+      if (isNaN(sh) || isNaN(eh) || sh===eh) return;
+      const start = dayIdx*24 + sh;
+      // duration wraps if end <= startHour
+      const dur = (eh > sh) ? (eh - sh) : (24 - sh + eh);
+      const end  = start + dur;
+      if (start < totalHours) pairs.push([start, Math.min(end, totalHours)]);
+    }
+
+    if ($('modeDaily').checked){
+      const rows = Array.from($('dailyList').querySelectorAll('.winRow'));
+      for (let d=0; d<eventDays; d++){
+        for (const r of rows){
+          const ins = r.querySelectorAll('input');
+          addWrapped(d, parseTime(ins[0].value), parseTime(ins[1].value));
+        }
       }
-      buildNamesGrid();
-      refreshResourceLabels();
-      buildUpgradeGrids();
-
-      document.getElementById('currentLevels').value = (data.currentLevels || Array(21).fill(0)).join(', ');
-      document.getElementById('resourceCounts').value = (data.resourceCounts || [0,500000,0,0,0,0,0,1,1,0]).join(', ');
-      document.getElementById('upgradePath').value = (data.upgradePath || []).join(', ');
-      document.getElementById('busyTimesStart').value = (data.busyTimesStart || []).join(', ');
-      document.getElementById('busyTimesEnd').value = (data.busyTimesEnd || []).join(', ');
-
-      writeResourcesToGrid(data.resourceCounts || [0,500000,0,0,0,0,0,1,1,0]);
+    } else {
+      const dayWraps = Array.from($('daysContainer').querySelectorAll('.dayWrap'));
+      for (let d=0; d<eventDays; d++){
+        const wrap = dayWraps[d % 7];
+        const rows = Array.from(wrap.querySelectorAll('.winRow'));
+        for (const r of rows){
+          const ins = r.querySelectorAll('input');
+          addWrapped(d, parseTime(ins[0].value), parseTime(ins[1].value));
+        }
+      }
     }
 
-    function setStatus(msg, ok){
-      const el = document.getElementById('status');
-      el.textContent = msg;
-      el.style.color = ok? '#b1ffb1' : '#ff9b9b';
-    }
-    document.getElementById('saveBtn').onclick = () => {
-      try {
-        const data = gather();
-        const blob = new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = 'config.json';
-        a.click();
-        URL.revokeObjectURL(a.href);
-        setStatus('Saved config.json', true);
-      } catch(e){ setStatus(e.message,false); }
-    };
-    document.getElementById('loadBtn').onclick = () => {
-      const inp = document.createElement('input');
-      inp.type = 'file'; inp.accept = 'application/json';
-      inp.onchange = () => {
-        const f = inp.files[0]; if(!f) return;
-        const fr = new FileReader();
-        fr.onload = () => { try { populate(JSON.parse(fr.result)); setStatus('Loaded '+f.name,true);} catch(e){ setStatus('Invalid JSON: '+e.message,false);} };
-        fr.readAsText(f);
+    const {starts, ends} = mergeIntervals(pairs, totalHours);
+    $('busyTimesStart').value = starts.join(', ');
+    $('busyTimesEnd').value   = ends.join(', ');
+    $('busyPreview').textContent = "Start hours:\n" + starts.join(', ') + "\n\nEnd hours:\n" + ends.join(', ');
+  }
+
+  $('modeDaily').onchange = () => { $('dailyBox').classList.remove('hidden'); $('perDayBox').classList.add('hidden'); };
+  $('modePerDay').onchange = () => { $('perDayBox').classList.remove('hidden'); $('dailyBox').classList.add('hidden'); };
+  $('btnGenerateBusy').onclick = generateBusyArrays;
+  $('btnClearBusy').onclick = () => { $('busyTimesStart').value=''; $('busyTimesEnd').value=''; $('busyPreview').textContent=''; };
+
+  // ---- Save / Load now read from fields+grids (CSV is just a mirror) ----
+  function gather(){
+    const s = getScalars();
+    const vars = { DLs: s.DLs, UNLOCKED_PETS: s.UNLOCKED_PETS };
+    const res = readResourcesFromGrid();                 // from fields
+    const levels = readCurrentLevelsFromGrids();         // from grids
+    const upgradePath = parseCSVInts($('upgradePath').value, vars); // still from textarea
+    const bts = parseCSVNums($('busyTimesStart').value, vars);
+    const bte = parseCSVNums($('busyTimesEnd').value, vars);
+    const names = [];
+    for(let i=0;i<10;i++){ names.push( $('name'+i).value || ('Res'+i) ); }
+    return Object.assign({}, s, {
+      currentLevels: levels,
+      resourceCounts: res,
+      upgradePath,
+      busyTimesStart: bts,
+      busyTimesEnd: bte,
+      resourceNames: names
+    });
+  }
+  $('saveBtn').onclick = () => {
+    try {
+      const data = gather();
+      const blob = new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'config.json';
+      a.click();
+      URL.revokeObjectURL(a.href);
+      setStatus('Saved config.json', true);
+    } catch(e){ setStatus(e.message,false); }
+  };
+  $('loadBtn').onclick = () => {
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = 'application/json';
+    inp.onchange = () => {
+      const f = inp.files[0]; if(!f) return;
+      const fr = new FileReader();
+      fr.onload = () => {
+        try {
+          const data = JSON.parse(fr.result);
+          populate(data);
+          setStatus('Loaded '+f.name,true);
+        } catch(e){ setStatus('Invalid JSON: '+e.message,false); }
       };
-      inp.click();
+      fr.readAsText(f);
     };
+    inp.click();
+  };
 
-    // init
+  // ---- populate + CSV mirror buttons ----
+  function populate(data){
+    function set(id, v){ const el = $(id); if(el && el.type==='checkbox') el.checked=!!v; else if(el) el.value = v; }
+    set('EVENT_DURATION_DAYS', data.EVENT_DURATION_DAYS ?? 14);
+    set('EVENT_DURATION_HOURS', data.EVENT_DURATION_HOURS ?? 0);
+    set('EVENT_DURATION_MINUTES', data.EVENT_DURATION_MINUTES ?? 0);
+    set('EVENT_DURATION_SECONDS', data.EVENT_DURATION_SECONDS ?? 0);
+    set('UNLOCKED_PETS', data.UNLOCKED_PETS ?? 100);
+    set('DLs', data.DLs ?? 0);
+    set('outputInterval', data.outputInterval ?? 5000);
+    set('EVENT_CURRENCY_WEIGHT', data.EVENT_CURRENCY_WEIGHT ?? 0.001);
+    set('FREE_EXP_WEIGHT', data.FREE_EXP_WEIGHT ?? 0.00006);
+    set('PET_STONES_WEIGHT', data.PET_STONES_WEIGHT ?? 0.000045);
+    set('GROWTH_WEIGHT', data.GROWTH_WEIGHT ?? 0.00007);
+    set('isFullPath', data.isFullPath ?? true);
+    set('allowSpeedUpgrades', data.allowSpeedUpgrades ?? true);
+    set('runOptimization', data.runOptimization ?? true);
+
+    if (Array.isArray(data.resourceNames) && data.resourceNames.length>=10){
+      resourceNames = data.resourceNames.slice(0,10);
+    }
     buildNamesGrid();
     refreshResourceLabels();
     buildUpgradeGrids();
-    populate({
-      currentLevels: Array(21).fill(0),
-      resourceCounts: [0,500000,0,0,0,0,0,1,1,0],
-      resourceNames: resourceNames
-    });
-  </script>
+
+    // write grids/fields
+    writeResourcesToGrid(data.resourceCounts || [0,500000,0,0,0,0,0,1,1,0]);
+    writeCurrentLevelsToGrids(data.currentLevels || Array(21).fill(0));
+
+    // mirror to CSV boxes (for reference)
+    $('resourceCounts').value = (data.resourceCounts || [0,500000,0,0,0,0,0,1,1,0]).join(', ');
+    $('currentLevels').value  = (data.currentLevels  || Array(21).fill(0)).join(', ');
+    $('upgradePath').value    = (data.upgradePath   || []).join(', ');
+    $('busyTimesStart').value = (data.busyTimesStart || []).join(', ');
+    $('busyTimesEnd').value   = (data.busyTimesEnd   || []).join(', ');
+  }
+
+  // CSV mirror buttons now *work*
+  $('syncFromResources').onclick = () => {
+    const list = readResourcesFromGrid();
+    $('resourceCounts').value = list.join(', ');
+    setStatus('Synced fields → resourceCounts CSV', true);
+  };
+  $('syncToResources').onclick = () => {
+    try{
+      const s = getScalars();
+      const vars = { DLs:s.DLs, UNLOCKED_PETS:s.UNLOCKED_PETS };
+      const arr = parseCSVNums($('resourceCounts').value, vars);
+      if (arr.length < 10) throw new Error('Need 10 values for resourceCounts.');
+      writeResourcesToGrid(arr);
+      setStatus('Parsed resourceCounts CSV → fields', true);
+    }catch(e){ setStatus(e.message,false); }
+  };
+  $('syncFromGrids').onclick = () => {
+    $('currentLevels').value = readCurrentLevelsFromGrids().join(', ');
+    setStatus('Synced grids → currentLevels CSV', true);
+  };
+  $('syncToGrids').onclick = () => {
+    try{
+      const s = getScalars();
+      const arr = parseCSVInts($('currentLevels').value, {DLs:s.DLs, UNLOCKED_PETS:s.UNLOCKED_PETS});
+      if (arr.length < 21) throw new Error('Need 21 values for currentLevels.');
+      writeCurrentLevelsToGrids(arr);
+      setStatus('Parsed currentLevels CSV → grids', true);
+    }catch(e){ setStatus(e.message,false); }
+  };
+
+  // ---- init ----
+  function onScalarChange(){ updateComputed(); }
+  ['DLs','UNLOCKED_PETS'].forEach(id => $(id).addEventListener('input', onScalarChange));
+  buildDailyBox();
+  buildPerDayBox();
+  buildNamesGrid();
+  refreshResourceLabels();
+  buildUpgradeGrids();
+  updateComputed();
+  populate({
+    currentLevels: Array(21).fill(0),
+    resourceCounts: [0,500000,0,0,0,0,0,1,1,0],
+    resourceNames: resourceNames
+  });
+</script>
 </body>
 </html>
