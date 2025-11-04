@@ -421,3 +421,4 @@ CMakeCache.txt
 *.cmake
 *.json
 *.yaml
+!example_config.json
