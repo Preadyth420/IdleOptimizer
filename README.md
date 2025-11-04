@@ -46,6 +46,10 @@ FREE\_EXP (idx 7) and GROWTH (idx 8) are computed from DLs and UNLOCKED\_PETS (n
 
 
 
+💡 For a demo, check out example\_config.json. Customize it and rename to config.json before running.
+
+
+
 Open assets/optimizer\_gui.html in your browser.,
 
 
