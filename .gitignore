@@ -399,3 +399,25 @@ FodyWeavers.xsd
 
 # JetBrains Rider
 *.sln.iml
+# Ignore build folders
+/out/
+/x64-Debug/
+/build/
+/Debug/
+/Release/
+*.exe
+*.log
+*.obj
+*.pch
+*.ilk
+*.pdb
+*.idb
+*.res
+*.manifest
+*.ninja
+.cache
+CMakeFiles/
+CMakeCache.txt
+*.cmake
+*.json
+*.yaml
