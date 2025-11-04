@@ -1,0 +1,11 @@
+/out/
+/build/
+/_deps/
+.vs/
+*.exe
+*.pdb
+*.ilk
+*.log
+CMakeCache.txt
+CMakeFiles/
+*.tlog
