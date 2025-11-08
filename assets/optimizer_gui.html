@@ -183,6 +183,8 @@
           </div>
         </div>
         <p class="muted mini" id="logFileHint">We create folders automatically when writing the file. Disable log file output if you don't want anything written to disk.</p>
+        <div class="mini" id="logSummary" style="margin-top:12px"></div>
+        <div class="preview" id="logPreview" style="margin-top:8px"></div>
       </div>
       <div class="card">
         <h2>Resource Names</h2>
@@ -574,11 +576,39 @@
     $('busyTimesEnd').value   = (data.busyTimesEnd   || []).join(', ');
   }
 
+  function refreshLogSummary(){
+    const interval = Math.max(0, +$('outputInterval').value || 0);
+    const logToConsole = $('logToConsole').checked;
+    const logToFile = $('logToFile').checked;
+    const appendMode = $('appendLogFile').checked;
+    const path = ($('logFilePath').value || 'logs/run_latest.txt').trim();
+
+    const destinations = [];
+    if (logToConsole) destinations.push('console window');
+    if (logToFile) destinations.push(`file (${appendMode ? 'append' : 'overwrite'}: ${path})`);
+    if (!destinations.length) destinations.push('no active destinations');
+
+    const intervalText = interval <= 0
+      ? 'every improvement is logged immediately'
+      : `logs every ${interval} ms (${(interval / 1000).toFixed(1)} s)`;
+
+    $('logSummary').textContent = `Current logging: ${destinations.join(', ')} — ${intervalText}.`;
+
+    const preview = [];
+    preview.push('[Logger] Interval: ' + (interval <= 0 ? 'immediate' : `${interval} ms`));
+    preview.push('[Logger] Destinations: ' + destinations.join(', '));
+    if (!logToFile) {
+      preview.push('[Hint] Enable "Write log file" to keep a history on disk.');
+    }
+    $('logPreview').textContent = preview.join('\n');
+  }
+
   function updateLogControls(){
     const fileEnabled = $('logToFile').checked;
     $('logFilePath').disabled = !fileEnabled;
     $('appendLogFile').disabled = !fileEnabled;
     $('logFileHint').style.opacity = fileEnabled ? '1' : '0.65';
+    refreshLogSummary();
   }
 
   // CSV mirror buttons now *work*
@@ -615,12 +645,17 @@
   function onScalarChange(){ updateComputed(); }
   ['DLs','UNLOCKED_PETS'].forEach(id => $(id).addEventListener('input', onScalarChange));
   $('logToFile').addEventListener('change', updateLogControls);
+  $('logToConsole').addEventListener('change', refreshLogSummary);
+  $('appendLogFile').addEventListener('change', refreshLogSummary);
+  $('logFilePath').addEventListener('input', refreshLogSummary);
+  $('outputInterval').addEventListener('input', refreshLogSummary);
   buildDailyBox();
   buildPerDayBox();
   buildNamesGrid();
   refreshResourceLabels();
   buildUpgradeGrids();
   updateComputed();
+  refreshLogSummary();
   populate({
     currentLevels: Array(21).fill(0),
     resourceCounts: [0,500000,0,0,0,0,0,1,1,0],

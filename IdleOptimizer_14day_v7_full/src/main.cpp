@@ -95,7 +95,7 @@ public:
     }
 };
 struct SearchContext {
-    Logger logger;
+    Logger& logger;
     const vector<double>& resources;
     const vector<int>& levels;
 };
