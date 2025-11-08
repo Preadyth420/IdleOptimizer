@@ -12,6 +12,7 @@
 #include <sstream>
 #include <limits>
 #include <filesystem>
+#include <cmath>
 
 #include "config_loader.hpp"
 using namespace std;
@@ -294,7 +295,8 @@ double performUpgrade(vector<int>& levels, vector<double>& resources, int upgrad
         }
         timeNeeded = max(timeNeeded, neededResources / productionRates[i]);
     }
-    int busyLookupIndex = static_cast<int>(timeElapsed + timeNeeded);
+    const double busyLookupTime = timeElapsed + timeNeeded;
+    const int busyLookupIndex = static_cast<int>(std::clamp(busyLookupTime, 0.0, static_cast<double>(TOTAL_SECONDS - 1)));
     if (0 <= busyLookupIndex && busyLookupIndex < TOTAL_SECONDS){
         timeNeeded += timeNeededSeconds[busyLookupIndex];
     };
@@ -324,7 +326,7 @@ double simulateUpgradePath(vector<int>& path, vector<int>& levels, vector<double
         double timeTaken = performUpgrade(levels, resources, upgradeType, time);
         time -= timeTaken;
         if (display) {
-            int elapsedSeconds = TOTAL_SECONDS - time;
+            const int elapsedSeconds = static_cast<int>(TOTAL_SECONDS - time);
             readoutUpgrade(upgradeType, levels, elapsedSeconds);
         }
     }
@@ -408,10 +410,9 @@ bool tryRemoveUpgrade(OptimizationPackage& package, SearchContext& context, Prop
     return false;
 }
 bool trySwapUpgrades(OptimizationPackage& package, SearchContext& context, Proposal* outProposal = nullptr) {
-    int pathLength = (int)package.path.size() - 1;
+    int pathLength = static_cast<int>(package.path.size()) - 1;
     thread_local vector<int> candidatePath;
     candidatePath = package.path;
-    double testScore;
     uniform_int_distribution<> swapDist(0, pathLength - 2);
     int startPos = swapDist(package.randomEngine);
     for (int i2 = 0; i2 < pathLength - 1; i2++) {
@@ -420,7 +421,7 @@ bool trySwapUpgrades(OptimizationPackage& package, SearchContext& context, Propo
             int j = (j2 + startPos) % (pathLength - 1);
             if (candidatePath[i] == candidatePath[j]) continue;
             swap(candidatePath[i], candidatePath[j]);
-            testScore = evaluatePath(candidatePath, context);
+            const double testScore = evaluatePath(candidatePath, context);
             if (testScore > package.score) {
                 if (outProposal) *outProposal = Proposal::Swap(i, j, testScore);
                 package.path = candidatePath;
@@ -435,9 +436,8 @@ bool trySwapUpgrades(OptimizationPackage& package, SearchContext& context, Propo
     return false;
 }
 bool tryRotateSubsequences(OptimizationPackage& package, SearchContext& context, Proposal* outProposal = nullptr) {
-    int pathLength = (int)package.path.size() - 1;
+    int pathLength = static_cast<int>(package.path.size()) - 1;
     thread_local vector<int> candidatePath;
-    double testScore;
     uniform_int_distribution<> rotateDist(0, pathLength - 3);
     int i = rotateDist(package.randomEngine);
     uniform_int_distribution<> rotateDist2(i+2, pathLength - 1);
@@ -448,7 +448,7 @@ bool tryRotateSubsequences(OptimizationPackage& package, SearchContext& context,
         bool isLeft = (k % 2 == 0);
         if(isLeft)  rotate(candidatePath.begin() + i, candidatePath.begin() + i + offset, candidatePath.begin() + j + 1);
         else        rotate(candidatePath.begin() + i, candidatePath.begin() + j - offset + 1, candidatePath.begin() + j + 1);
-        testScore = evaluatePath(candidatePath, context);
+        const double testScore = evaluatePath(candidatePath, context);
         int rotationPos = isLeft ? i + offset: j - offset + 1;
         if (testScore > package.score) {
             if (outProposal) *outProposal = Proposal::Rotate(i, j + 1, rotationPos, testScore);
