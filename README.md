@@ -14,8 +14,8 @@
 1. Install Visual Studio 2022 with "Desktop development with C++".  
 2. Open this folder as a CMake project and build target `IdleOptimizer`.
 
-> Uses `nlohmann/json` via CMake `FetchContent`. If your network blocks it,
-> vendor the single-header `json.hpp` and include it instead.
+> Bundled with a minimal single-header JSON parser under `third_party/` so the
+> project builds fully offline.
 
 ## Run
 

@@ -4,7 +4,8 @@
 #include <string>
 #include <fstream>
 #include <iostream>
-#include <nlohmann/json.hpp>
+#include <type_traits>
+#include "nlohmann/json.hpp"
 
 struct AppConfig {
     // Scalars / weights / flags
@@ -47,19 +48,20 @@ inline AppConfig loadConfig(const std::string& path){
     }
     nlohmann::json j;
     try {
-        f >> j;
+        j = nlohmann::json::parse(f);
     } catch (const std::exception& e) {
         std::cerr << "Failed to parse config.json: " << e.what() << "\n";
         return cfg;
     }
 
     auto safeAssign = [&](const char* key, auto& out) {
-        auto it = j.find(key);
-        if (it == j.end() || it->is_null()) {
+        const nlohmann::json* it = j.find(key);
+        if (!it || it->is_null()) {
             return;
         }
         try {
-            out = it->get<std::decay_t<decltype(out)>>();
+            using ValueType = std::decay_t<decltype(out)>;
+            out = it->template get<ValueType>();
         } catch (const std::exception& e) {
             std::cerr << "Invalid value for '" << key << "': " << e.what() << "\n";
         }
@@ -80,27 +82,29 @@ inline AppConfig loadConfig(const std::string& path){
     safeAssign("appendLogFile", cfg.appendLogFile);
     safeAssign("pauseOnExit", cfg.pauseOnExit);
 
-    auto logPathIt = j.find("logFilePath");
-    if (logPathIt != j.end() && !logPathIt->is_null()) {
-        if (logPathIt->is_string()) {
-            cfg.logFilePath = logPathIt->get<std::string>();
-        } else {
-            std::cerr << "Invalid value for 'logFilePath': expected string.\n";
+    if (const nlohmann::json* logPathIt = j.find("logFilePath")) {
+        if (!logPathIt->is_null()) {
+            if (logPathIt->is_string()) {
+                cfg.logFilePath = logPathIt->get<std::string>();
+            } else {
+                std::cerr << "Invalid value for 'logFilePath': expected string.\n";
+            }
         }
     }
 
     auto loadIntArray = [&](const char* key, std::vector<int>& target, size_t expected) {
-        auto it = j.find(key);
-        if (it == j.end()) {
+        const nlohmann::json* node = j.find(key);
+        if (!node) {
             return;
         }
-        if (!it->is_array()) {
+        if (!node->is_array()) {
             std::cerr << "Invalid value for '" << key << "': expected array.\n";
             return;
         }
         std::vector<int> temp;
-        temp.reserve(it->size());
-        for (const auto& entry : *it) {
+        const auto& arr = node->as_array();
+        temp.reserve(arr.size());
+        for (const auto& entry : arr) {
             if (!entry.is_number_integer()) {
                 std::cerr << "Invalid element in '" << key << "': expected integer.\n";
                 return;
@@ -113,17 +117,18 @@ inline AppConfig loadConfig(const std::string& path){
     };
 
     auto loadDoubleArray = [&](const char* key, std::vector<double>& target, size_t expected, double pad = 0.0) {
-        auto it = j.find(key);
-        if (it == j.end()) {
+        const nlohmann::json* node = j.find(key);
+        if (!node) {
             return;
         }
-        if (!it->is_array()) {
+        if (!node->is_array()) {
             std::cerr << "Invalid value for '" << key << "': expected array.\n";
             return;
         }
         std::vector<double> temp;
-        temp.reserve(it->size());
-        for (const auto& entry : *it) {
+        const auto& arr = node->as_array();
+        temp.reserve(arr.size());
+        for (const auto& entry : arr) {
             if (!entry.is_number()) {
                 std::cerr << "Invalid element in '" << key << "': expected number.\n";
                 return;
@@ -143,13 +148,13 @@ inline AppConfig loadConfig(const std::string& path){
     loadDoubleArray("busyTimesStart", cfg.busyTimesStart, 0);
     loadDoubleArray("busyTimesEnd", cfg.busyTimesEnd, 0);
 
-    auto resourcesIt = j.find("resourceNames");
-    if (resourcesIt != j.end()) {
+    if (const nlohmann::json* resourcesIt = j.find("resourceNames")) {
         if (!resourcesIt->is_array()) {
             std::cerr << "Invalid value for 'resourceNames': expected array.\n";
         } else {
-            for (size_t i = 0; i < cfg.resourceNames.size() && i < resourcesIt->size(); ++i) {
-                const auto& entry = (*resourcesIt)[i];
+            const auto& arr = resourcesIt->as_array();
+            for (size_t i = 0; i < cfg.resourceNames.size() && i < arr.size(); ++i) {
+                const auto& entry = arr[i];
                 if (entry.is_string()) {
                     cfg.resourceNames[i] = entry.get<std::string>();
                 } else {
