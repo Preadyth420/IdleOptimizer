@@ -13,6 +13,11 @@
   "isFullPath": true,
   "allowSpeedUpgrades": true,
   "runOptimization": true,
+  "logToConsole": true,
+  "logToFile": false,
+  "appendLogFile": false,
+  "logFilePath": "logs/run_latest.txt",
+  "pauseOnExit": false,
   "currentLevels": [
     0,
     0,

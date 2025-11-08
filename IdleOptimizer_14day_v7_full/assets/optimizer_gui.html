@@ -12,6 +12,7 @@
     .card{background:var(--card);border:1px solid #1c2533;border-radius:14px;padding:16px;margin-bottom:16px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
     .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
     .row{display:grid;grid-template-columns: 260px 1fr;align-items:center;gap:8px;margin:6px 0}
+    .row .checkCol label{display:inline-flex;align-items:center;margin-right:12px;gap:6px;font-size:.95rem}
     .resgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
     .upgrid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
     .tabs{display:flex;gap:6px;margin:6px 0 14px}
@@ -31,7 +32,7 @@
     <h1>Upgrade Optimizer — Settings GUI (v7 — 14-day event)</h1>
     <div class="tabs">
       <div class="tab active" id="tabMainBtn">Main</div>
-      <div class="tab" id="tabNamesBtn">Resource Names</div>
+      <div class="tab" id="tabNamesBtn">Logging &amp; Names</div>
     </div>
 
     <div class="card">
@@ -127,6 +128,29 @@
     </div>
 
     <div id="tabNames" class="hidden">
+      <div class="card">
+        <h2>Logging &amp; Runtime</h2>
+        <p class="muted">Configure runtime logging outputs and whether the optimizer should pause before closing.</p>
+        <div class="row">
+          <label>Log outputs</label>
+          <div class="checkCol">
+            <label><input type="checkbox" id="logToConsole" checked> Console window</label>
+            <label><input type="checkbox" id="logToFile"> Write log file</label>
+            <label><input type="checkbox" id="appendLogFile"> Append to log file</label>
+          </div>
+        </div>
+        <div class="row">
+          <label>Log file path</label>
+          <input id="logFilePath" type="text" value="logs/run_latest.txt" placeholder="logs/run_latest.txt">
+        </div>
+        <div class="row">
+          <label>Pause on exit</label>
+          <div class="checkCol">
+            <label><input type="checkbox" id="pauseOnExit"> Keep window open after finishing</label>
+          </div>
+        </div>
+        <p class="muted" id="logFileHint" style="font-size:0.9rem">When file logging is enabled we create folders as needed. Disable it to avoid writing to disk.</p>
+      </div>
       <div class="card">
         <h2>Resource Names</h2>
         <p class="muted">Rename resources here for each event. Saved as <code>resourceNames</code> in JSON.</p>
@@ -241,6 +265,8 @@
     }
 
     function getScalars(){
+      const fileEnabled = document.getElementById('logToFile').checked;
+      const filePath = document.getElementById('logFilePath').value.trim();
       return {
         EVENT_DURATION_DAYS: +document.getElementById('EVENT_DURATION_DAYS').value,
         EVENT_DURATION_HOURS: +document.getElementById('EVENT_DURATION_HOURS').value,
@@ -256,6 +282,11 @@
         isFullPath: document.getElementById('isFullPath').checked,
         allowSpeedUpgrades: document.getElementById('allowSpeedUpgrades').checked,
         runOptimization: document.getElementById('runOptimization').checked,
+        logToConsole: document.getElementById('logToConsole').checked,
+        logToFile: fileEnabled,
+        appendLogFile: fileEnabled && document.getElementById('appendLogFile').checked,
+        logFilePath: filePath || 'logs/run_latest.txt',
+        pauseOnExit: document.getElementById('pauseOnExit').checked,
       };
     }
     function computedFreeExp(DLs){ return 1/((500+DLs)/5); }
@@ -326,6 +357,13 @@
       set('isFullPath', data.isFullPath ?? true);
       set('allowSpeedUpgrades', data.allowSpeedUpgrades ?? true);
       set('runOptimization', data.runOptimization ?? true);
+      set('logToConsole', data.logToConsole ?? true);
+      set('logToFile', data.logToFile ?? false);
+      set('appendLogFile', data.appendLogFile ?? false);
+      set('logFilePath', data.logFilePath ?? 'logs/run_latest.txt');
+      set('pauseOnExit', data.pauseOnExit ?? false);
+
+      updateLogControls();
 
       if (Array.isArray(data.resourceNames) && data.resourceNames.length>=10){
         resourceNames = data.resourceNames.slice(0,10);
@@ -347,6 +385,13 @@
       const el = document.getElementById('status');
       el.textContent = msg;
       el.style.color = ok? '#b1ffb1' : '#ff9b9b';
+    }
+
+    function updateLogControls(){
+      const fileEnabled = document.getElementById('logToFile').checked;
+      document.getElementById('logFilePath').disabled = !fileEnabled;
+      document.getElementById('appendLogFile').disabled = !fileEnabled;
+      document.getElementById('logFileHint').style.opacity = fileEnabled ? '1' : '0.65';
     }
     document.getElementById('saveBtn').onclick = () => {
       try {
@@ -373,6 +418,7 @@
     };
 
     // init
+    document.getElementById('logToFile').addEventListener('change', updateLogControls);
     buildNamesGrid();
     refreshResourceLabels();
     buildUpgradeGrids();
