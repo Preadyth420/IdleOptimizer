@@ -113,6 +113,11 @@
       <div class="card">
         <h2>Weekly Busy Schedule</h2>
         <p class="muted">Define when you’re <b>busy</b> (cannot buy). We expand this across the whole event and write the arrays for you.</p>
+        <div class="row">
+          <label>Event start time</label>
+          <input type="time" id="eventStartTime" value="08:00">
+        </div>
+        <div class="mini" style="margin-bottom:8px">We convert 24-hour clock entries into hours after your start time. Example: start at 08:00 &rarr; a 19:00 busy window begins at hour 11.</div>
         <div style="display:flex;gap:14px;align-items:center;margin:8px 0">
           <label><input type="radio" name="schedMode" id="modeDaily" checked> Same times every day</label>
           <label><input type="radio" name="schedMode" id="modePerDay"> Custom per-day (Mon–Sun)</label>
@@ -169,7 +174,7 @@
           <div class="checkCol">
             <label><input type="checkbox" id="logToConsole" checked> Console window</label>
             <label><input type="checkbox" id="logToFile"> Write log file</label>
-            <label><input type="checkbox" id="appendLogFile"> Append to log file</label>
+            <label><input type="checkbox" id="appendLogFile"> Add to existing log file (append)</label>
           </div>
         </div>
         <div class="row">
@@ -182,7 +187,9 @@
             <label><input type="checkbox" id="pauseOnExit"> Keep window open after the run completes</label>
           </div>
         </div>
-        <p class="muted mini" id="logFileHint">We create folders automatically when writing the file. Disable log file output if you don't want anything written to disk.</p>
+        <p class="muted mini" id="logFileHint">We create folders automatically when writing the file. Uncheck "Write log file" if you don't want anything written to disk.</p>
+        <div class="mini" id="logSummary" style="margin-top:12px"></div>
+        <div class="preview" id="logPreview" style="margin-top:8px"></div>
       </div>
       <div class="card">
         <h2>Resource Names</h2>
@@ -439,13 +446,23 @@
     const eventDays = Math.max(1, +$('EVENT_DURATION_DAYS').value || 14);
     const totalHours = eventDays * 24;
     const pairs = [];
+    const startHour = parseTime($('eventStartTime').value);
+
+    const toRelative = (clockHour) => {
+      if (isNaN(clockHour)) return NaN;
+      if (isNaN(startHour)) return clockHour;
+      let delta = clockHour - startHour;
+      delta = ((delta % 24) + 24) % 24;
+      return delta;
+    };
 
     function addWrapped(dayIdx, sh, eh){
-      if (isNaN(sh) || isNaN(eh) || sh===eh) return;
-      const start = dayIdx*24 + sh;
-      // duration wraps if end <= startHour
-      const dur = (eh > sh) ? (eh - sh) : (24 - sh + eh);
-      const end  = start + dur;
+      const relStart = toRelative(sh);
+      const relEnd = toRelative(eh);
+      if (isNaN(relStart) || isNaN(relEnd) || relStart===relEnd) return;
+      let start = dayIdx*24 + relStart;
+      let end   = dayIdx*24 + relEnd;
+      if (end <= start) end += 24;
       if (start < totalHours) pairs.push([start, Math.min(end, totalHours)]);
     }
 
@@ -574,11 +591,39 @@
     $('busyTimesEnd').value   = (data.busyTimesEnd   || []).join(', ');
   }
 
+  function refreshLogSummary(){
+    const interval = Math.max(0, +$('outputInterval').value || 0);
+    const logToConsole = $('logToConsole').checked;
+    const logToFile = $('logToFile').checked;
+    const appendMode = $('appendLogFile').checked;
+    const path = ($('logFilePath').value || 'logs/run_latest.txt').trim();
+
+    const destinations = [];
+    if (logToConsole) destinations.push('console window');
+    if (logToFile) destinations.push(`file (${appendMode ? 'append' : 'overwrite'}: ${path})`);
+    if (!destinations.length) destinations.push('no active destinations');
+
+    const intervalText = interval <= 0
+      ? 'every improvement is logged immediately'
+      : `logs every ${interval} ms (${(interval / 1000).toFixed(1)} s)`;
+
+    $('logSummary').textContent = `Current logging: ${destinations.join(', ')} — ${intervalText}.`;
+
+    const preview = [];
+    preview.push('[Logger] Interval: ' + (interval <= 0 ? 'immediate' : `${interval} ms`));
+    preview.push('[Logger] Destinations: ' + destinations.join(', '));
+    if (!logToFile) {
+      preview.push('[Hint] Enable "Write log file" to keep a history on disk.');
+    }
+    $('logPreview').textContent = preview.join('\n');
+  }
+
   function updateLogControls(){
     const fileEnabled = $('logToFile').checked;
     $('logFilePath').disabled = !fileEnabled;
     $('appendLogFile').disabled = !fileEnabled;
     $('logFileHint').style.opacity = fileEnabled ? '1' : '0.65';
+    refreshLogSummary();
   }
 
   // CSV mirror buttons now *work*
@@ -615,12 +660,17 @@
   function onScalarChange(){ updateComputed(); }
   ['DLs','UNLOCKED_PETS'].forEach(id => $(id).addEventListener('input', onScalarChange));
   $('logToFile').addEventListener('change', updateLogControls);
+  $('logToConsole').addEventListener('change', refreshLogSummary);
+  $('appendLogFile').addEventListener('change', refreshLogSummary);
+  $('logFilePath').addEventListener('input', refreshLogSummary);
+  $('outputInterval').addEventListener('input', refreshLogSummary);
   buildDailyBox();
   buildPerDayBox();
   buildNamesGrid();
   refreshResourceLabels();
   buildUpgradeGrids();
   updateComputed();
+  refreshLogSummary();
   populate({
     currentLevels: Array(21).fill(0),
     resourceCounts: [0,500000,0,0,0,0,0,1,1,0],

@@ -9,6 +9,10 @@
 #include <array>
 #include <unordered_set>
 #include <iomanip>
+#include <sstream>
+#include <limits>
+#include <filesystem>
+#include <cmath>
 
 #include "config_loader.hpp"
 using namespace std;
@@ -34,6 +38,11 @@ double GROWTH_WEIGHT = 0.00007;
 bool isFullPath = true;
 bool allowSpeedUpgrades = true;
 bool runOptimization = true;
+bool logToConsoleEnabled = true;
+bool logToFileEnabled = false;
+bool appendToLogFile = false;
+string logFilePath = "logs/run_latest.txt";
+bool pauseOnExit = false;
 
 // END USER SETTINGS (runtime) ------------------------------------------
 
@@ -64,38 +73,70 @@ void printVector(const vector<T>& x, ostream& out = cout) {
         if (i+1<x.size()) out << ",";
     }
 }
-class NullBuffer : public std::streambuf {
-public:
-    int overflow(int c) override { return c; }
-};
-class NullStream : public std::ostream {
-public:
-    NullStream() : std::ostream(&m_sb) {}
-private:
-    NullBuffer m_sb;
-};
 class Logger {
     int interval;
     mutable chrono::steady_clock::time_point lastLogTime;
-    ostream& out;
+    ostream* consoleOut;
+    mutable ofstream fileOut;
+    bool logToFile = false;
+    bool logToConsole = true;
 public:
-    Logger(int outputInterval, ostream& output = cout)
+    Logger(int outputInterval,
+           bool enableConsole,
+           const string& logFilePath,
+           bool appendToLog)
         : interval(outputInterval),
           lastLogTime(chrono::steady_clock::now()),
-          out(output) {}
+          consoleOut(enableConsole ? &cout : nullptr),
+          logToFile(!logFilePath.empty()),
+          logToConsole(enableConsole) {
+        if (logToFile) {
+            try {
+                std::filesystem::path logPath(logFilePath);
+                if (logPath.has_parent_path()) {
+                    std::filesystem::create_directories(logPath.parent_path());
+                }
+            } catch (const std::filesystem::filesystem_error& e) {
+                cerr << "Failed to prepare log directory: " << e.what() << "\n";
+            }
+            ios::openmode mode = ios::out;
+            if (appendToLog) {
+                mode |= ios::app;
+            } else {
+                mode |= ios::trunc;
+            }
+            fileOut.open(logFilePath, mode);
+            if (!fileOut.good()) {
+                cerr << "Failed to open log file: " << logFilePath << "\n";
+                logToFile = false;
+            }
+        }
+    }
+    void logLine(const string& message) const {
+        if (logToConsole && consoleOut) {
+            (*consoleOut) << message;
+            consoleOut->flush();
+        }
+        if (logToFile && fileOut.good()) {
+            fileOut << message;
+            fileOut.flush();
+        }
+    }
     void logImprovement(const string& type, vector<int>& path, const double score) const {
         auto now = chrono::steady_clock::now();
         auto elapsed = chrono::duration_cast<chrono::milliseconds>(now - lastLogTime).count();
-        if (elapsed >= interval) {
-            out << "Improved path (" << type << "): \n{";
-            printVector(path, out);
-            out << "}\nScore: " << score << "\n";
+        if (interval <= 0 || elapsed >= interval) {
+            ostringstream ss;
+            ss << "Improved path (" << type << "): \n{";
+            printVector(path, ss);
+            ss << "}\nScore: " << score << "\n";
+            logLine(ss.str());
             lastLogTime = now;
         }
     }
 };
 struct SearchContext {
-    Logger logger;
+    Logger& logger;
     const vector<double>& resources;
     const vector<int>& levels;
 };
@@ -507,6 +548,13 @@ int main() {
     isFullPath = cfg.isFullPath;
     allowSpeedUpgrades = cfg.allowSpeedUpgrades;
     runOptimization = cfg.runOptimization;
+    logToConsoleEnabled = cfg.logToConsole;
+    logToFileEnabled = cfg.logToFile;
+    appendToLogFile = cfg.appendLogFile;
+    if (!cfg.logFilePath.empty()) {
+        logFilePath = cfg.logFilePath;
+    }
+    pauseOnExit = cfg.pauseOnExit;
     currentLevels = cfg.currentLevels;
     resourceCounts = cfg.resourceCounts;
     upgradePath = cfg.upgradePath;
@@ -537,7 +585,13 @@ int main() {
     if (runOptimization) {
         random_device seed;
         mt19937 randomEngine(seed());
-        Logger logger(outputInterval);
+        if (logToFileEnabled) {
+            cout << "Improvement log file: " << logFilePath << "\n";
+        }
+        Logger logger(outputInterval,
+                      logToConsoleEnabled,
+                      logToFileEnabled ? logFilePath : string(),
+                      appendToLogFile);
         SearchContext context{logger, resourceCounts, currentLevels};
         OptimizationPackage package = {upgradePath, 0, move(randomEngine)};
         optimizeUpgradePath(package, context, 20000); // higher default
@@ -546,5 +600,10 @@ int main() {
 
     calculateFinalPath(upgradePath);
     cout << "Done.\n";
+    if (pauseOnExit) {
+        cout << "Press Enter to close..." << flush;
+        cin.clear();
+        cin.ignore(numeric_limits<streamsize>::max(), '\n');
+    }
     return 0;
 }
