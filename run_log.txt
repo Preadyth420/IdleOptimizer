@@ -1,0 +1,4 @@
+=== IdleOptimizer run started 04/11/2025  7:29:01.04 ===
+'.\IdleOptimizer.exe' is not recognized as an internal or external command,
+operable program or batch file.
+=== Exit code 9009 ===
