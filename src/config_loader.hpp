@@ -24,6 +24,7 @@ struct AppConfig {
     bool appendLogFile = false;
     std::string logFilePath = "logs/run_latest.txt";
     bool pauseOnExit = false;
+    int maxOptimizationIterations = 20000;
 
     // Vectors
     std::vector<int> currentLevels = std::vector<int>(21, 0);
@@ -121,6 +122,7 @@ inline AppConfig loadConfig(const std::string& path){
     safeAssign("logToFile", cfg.logToFile);
     safeAssign("appendLogFile", cfg.appendLogFile);
     safeAssign("pauseOnExit", cfg.pauseOnExit);
+    safeAssign("maxOptimizationIterations", cfg.maxOptimizationIterations);
 
     if (const nlohmann::json* logPathIt = j.find("logFilePath")) {
         if (!logPathIt->is_null()) {
@@ -210,6 +212,11 @@ inline AppConfig loadConfig(const std::string& path){
                 }
             }
         }
+    }
+
+    if (cfg.maxOptimizationIterations < 0) {
+        std::cerr << "Invalid value for 'maxOptimizationIterations': expected non-negative integer. Clamping to 0.\n";
+        cfg.maxOptimizationIterations = 0;
     }
 
     return cfg;

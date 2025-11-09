@@ -18,6 +18,7 @@
   "appendLogFile": false,
   "logFilePath": "logs/run_latest.txt",
   "pauseOnExit": true,
+  "maxOptimizationIterations": 20000,
   "currentLevels": [
     0,
     0,

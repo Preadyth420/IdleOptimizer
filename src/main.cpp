@@ -43,6 +43,7 @@ bool logToFileEnabled = false;
 bool appendToLogFile = false;
 string logFilePath = "logs/run_latest.txt";
 bool pauseOnExit = false;
+int maxOptimizationIterations = 20000;
 
 // END USER SETTINGS (runtime) ------------------------------------------
 
@@ -555,6 +556,7 @@ int main() {
         logFilePath = cfg.logFilePath;
     }
     pauseOnExit = cfg.pauseOnExit;
+    maxOptimizationIterations = cfg.maxOptimizationIterations;
     currentLevels = cfg.currentLevels;
     resourceCounts = cfg.resourceCounts;
     upgradePath = cfg.upgradePath;
@@ -594,7 +596,7 @@ int main() {
                       appendToLogFile);
         SearchContext context{logger, resourceCounts, currentLevels};
         OptimizationPackage package = {upgradePath, 0, move(randomEngine)};
-        optimizeUpgradePath(package, context, 20000); // higher default
+        optimizeUpgradePath(package, context, maxOptimizationIterations);
         upgradePath = move(package.path);
     }
 

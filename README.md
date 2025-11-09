@@ -24,6 +24,7 @@
    - "Write log file" enables disk logging and will create the target folder if it does not exist.
    - "Add to existing log file (append)" keeps prior runs in the same file when disk logging is enabled.
    - "Pause on exit" keeps the console window open after the run finishes.
+   - "Max optimization iterations" caps how many non-improving iterations the search will attempt (set to `0` to stop immediately after the initial evaluation).
    - The live preview on the right summarises which logging destinations (console / file) are active.
 3. Click **Save JSON** to export `config.json` (or use the bundled `config.example.json` as a starting point).
 4. Place `config.json` next to the EXE (or run from this folder).
