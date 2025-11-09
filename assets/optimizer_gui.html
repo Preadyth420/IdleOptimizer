@@ -113,6 +113,11 @@
       <div class="card">
         <h2>Weekly Busy Schedule</h2>
         <p class="muted">Define when you’re <b>busy</b> (cannot buy). We expand this across the whole event and write the arrays for you.</p>
+        <div class="row">
+          <label>Optimizer start time</label>
+          <input type="time" id="optimizerStartTime" value="08:00">
+        </div>
+        <div class="mini" style="margin-bottom:8px">We convert 24-hour clock entries into hours after your optimizer start time. Example: start the optimizer at 08:00 &rarr; a 19:00 busy window begins at hour 11.</div>
         <div style="display:flex;gap:14px;align-items:center;margin:8px 0">
           <label><input type="radio" name="schedMode" id="modeDaily" checked> Same times every day</label>
           <label><input type="radio" name="schedMode" id="modePerDay"> Custom per-day (Mon–Sun)</label>
@@ -441,13 +446,23 @@
     const eventDays = Math.max(1, +$('EVENT_DURATION_DAYS').value || 14);
     const totalHours = eventDays * 24;
     const pairs = [];
+    const startHour = parseTime($('optimizerStartTime').value);
+
+    const toRelative = (clockHour) => {
+      if (isNaN(clockHour)) return NaN;
+      if (isNaN(startHour)) return clockHour;
+      let delta = clockHour - startHour;
+      delta = ((delta % 24) + 24) % 24;
+      return delta;
+    };
 
     function addWrapped(dayIdx, sh, eh){
-      if (isNaN(sh) || isNaN(eh) || sh===eh) return;
-      const start = dayIdx*24 + sh;
-      // duration wraps if end <= startHour
-      const dur = (eh > sh) ? (eh - sh) : (24 - sh + eh);
-      const end  = start + dur;
+      const relStart = toRelative(sh);
+      const relEnd = toRelative(eh);
+      if (isNaN(relStart) || isNaN(relEnd) || relStart===relEnd) return;
+      let start = dayIdx*24 + relStart;
+      let end   = dayIdx*24 + relEnd;
+      if (end <= start) end += 24;
       if (start < totalHours) pairs.push([start, Math.min(end, totalHours)]);
     }
 

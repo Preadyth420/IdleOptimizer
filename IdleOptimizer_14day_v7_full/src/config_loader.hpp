@@ -19,6 +19,11 @@ struct AppConfig {
     bool isFullPath = true;
     bool allowSpeedUpgrades = true;
     bool runOptimization = true;
+    bool logToConsole = true;
+    bool logToFile = false;
+    bool appendLogFile = false;
+    std::string logFilePath = "logs/run_latest.txt";
+    bool pauseOnExit = false;
 
     // Vectors
     std::vector<int> currentLevels = std::vector<int>(21, 0);
@@ -72,6 +77,20 @@ inline AppConfig loadConfig(const std::string& path){
     safeAssign("isFullPath", cfg.isFullPath);
     safeAssign("allowSpeedUpgrades", cfg.allowSpeedUpgrades);
     safeAssign("runOptimization", cfg.runOptimization);
+    safeAssign("logToConsole", cfg.logToConsole);
+    safeAssign("logToFile", cfg.logToFile);
+    safeAssign("appendLogFile", cfg.appendLogFile);
+    safeAssign("pauseOnExit", cfg.pauseOnExit);
+
+    if (const nlohmann::json* logPathIt = j.find("logFilePath")) {
+        if (!logPathIt->is_null()) {
+            if (logPathIt->is_string()) {
+                cfg.logFilePath = logPathIt->get<std::string>();
+            } else {
+                std::cerr << "Invalid value for 'logFilePath': expected string.\n";
+            }
+        }
+    }
 
     auto loadIntArray = [&](const char* key, std::vector<int>& target, size_t expected) {
         const nlohmann::json* node = j.find(key);
