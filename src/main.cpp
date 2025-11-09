@@ -464,7 +464,6 @@ bool exhaustRotateSubsequences(OptimizationPackage& package, SearchContext& cont
     int pathLength = (int)package.path.size() - 1;
     int maxIndex = pathLength - 1;
     thread_local vector<int> candidatePath;
-    double testScore;
     uniform_int_distribution<> rotateDist(0, maxIndex - 2);
     int i = rotateDist(package.randomEngine);
     for (int i2 = 0; i2 < maxIndex - 1; i2++){
