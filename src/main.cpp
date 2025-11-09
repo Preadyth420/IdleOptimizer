@@ -464,6 +464,7 @@ bool exhaustRotateSubsequences(OptimizationPackage& package, SearchContext& cont
     int pathLength = (int)package.path.size() - 1;
     int maxIndex = pathLength - 1;
     thread_local vector<int> candidatePath;
+    double testScore = package.score;
     uniform_int_distribution<> rotateDist(0, maxIndex - 2);
     int i = rotateDist(package.randomEngine);
     for (int i2 = 0; i2 < maxIndex - 1; i2++){
@@ -478,7 +479,7 @@ bool exhaustRotateSubsequences(OptimizationPackage& package, SearchContext& cont
                 bool isLeft = (k % 2 == 0);
                 if(isLeft)  rotate(candidatePath.begin() + i3, candidatePath.begin() + i3 + offset, candidatePath.begin() + j3 + 1);
                 else        rotate(candidatePath.begin() + i3, candidatePath.begin() + j3 - offset + 1, candidatePath.begin() + j3 + 1);
-                double testScore = evaluatePath(candidatePath, context);
+                testScore = evaluatePath(candidatePath, context);
                 int rotationPos = isLeft ? i3 + offset: j3 - offset + 1;
                 if (testScore > package.score) {
                     if (outProposal) *outProposal = Proposal::Rotate(i3, j3+1, rotationPos, testScore);
