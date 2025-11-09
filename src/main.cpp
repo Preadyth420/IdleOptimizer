@@ -325,7 +325,7 @@ double simulateUpgradePath(vector<int>& path, vector<int>& levels, vector<double
         double timeTaken = performUpgrade(levels, resources, upgradeType, time);
         time -= timeTaken;
         if (display) {
-            int elapsedSeconds = TOTAL_SECONDS - time;
+            const int elapsedSeconds = static_cast<int>(TOTAL_SECONDS - time);
             readoutUpgrade(upgradeType, levels, elapsedSeconds);
         }
     }
