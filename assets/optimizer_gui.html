@@ -300,10 +300,21 @@
       return Math.trunc(n);
     }).filter(x=>x!==null);
   }
+  function parseClockHours(text){
+    const m = /^([+-]?\d+):(\d{2})$/.exec(text);
+    if(!m) return null;
+    const hours = Number(m[1]);
+    const mins = Number(m[2]);
+    if(!Number.isFinite(hours) || !Number.isFinite(mins) || mins >= 60) return null;
+    const sign = hours < 0 ? -1 : 1;
+    return hours + sign * (mins / 60);
+  }
   function parseCSVNums(text, vars){
     if(!text.trim()) return [];
     return text.split(',').map(s=>{
       const t = s.trim(); if(!t) return null;
+      const clock = parseClockHours(t);
+      if(clock !== null) return clock;
       const v = isAllowedExpr(t) ? evalExpr(t, vars) : t;
       const n = Number(v);
       if(!isFinite(n)) throw new Error('Invalid number: '+t);

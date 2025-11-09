@@ -39,6 +39,46 @@ struct AppConfig {
     };
 };
 
+inline std::string trimCopy(const std::string& s){
+    const auto start = s.find_first_not_of(" \t\n\r");
+    if (start == std::string::npos) {
+        return std::string();
+    }
+    const auto end = s.find_last_not_of(" \t\n\r");
+    return s.substr(start, end - start + 1);
+}
+
+inline bool parseClockHours(const std::string& text, double& out){
+    const std::string trimmed = trimCopy(text);
+    const auto colon = trimmed.find(':');
+    if (colon == std::string::npos) {
+        return false;
+    }
+    const std::string hoursPart = trimCopy(trimmed.substr(0, colon));
+    const std::string minsPart = trimCopy(trimmed.substr(colon + 1));
+    if (hoursPart.empty() || minsPart.empty()) {
+        return false;
+    }
+    try {
+        size_t idx = 0;
+        const int hours = std::stoi(hoursPart, &idx);
+        if (idx != hoursPart.size()) {
+            return false;
+        }
+        idx = 0;
+        const int mins = std::stoi(minsPart, &idx);
+        if (idx != minsPart.size() || mins < 0 || mins >= 60) {
+            return false;
+        }
+        const double base = static_cast<double>(hours);
+        const double frac = static_cast<double>(mins) / 60.0;
+        out = base >= 0 ? base + frac : base - frac;
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
 inline AppConfig loadConfig(const std::string& path){
     AppConfig cfg;
     std::ifstream f(path);
@@ -129,11 +169,19 @@ inline AppConfig loadConfig(const std::string& path){
         const auto& arr = node->as_array();
         temp.reserve(arr.size());
         for (const auto& entry : arr) {
-            if (!entry.is_number()) {
-                std::cerr << "Invalid element in '" << key << "': expected number.\n";
-                return;
+            if (entry.is_number()) {
+                temp.push_back(entry.get<double>());
+                continue;
             }
-            temp.push_back(entry.get<double>());
+            if (entry.is_string()) {
+                double clockValue = 0.0;
+                if (parseClockHours(entry.get<std::string>(), clockValue)) {
+                    temp.push_back(clockValue);
+                    continue;
+                }
+            }
+            std::cerr << "Invalid element in '" << key << "': expected number or HH:MM string.\n";
+            return;
         }
         if (expected > 0) {
             if (temp.size() < expected) temp.resize(expected, pad);

@@ -34,6 +34,6 @@
 
 - Event duration in C++ is compiled as **14 days** for now (matches the GUI).
 - `resourceNames` are read at runtime from `config.json`.
-- `busyTimesStart` / `busyTimesEnd` values in `config.json` are expressed as **hours from when you launch the optimizer**, not clock-of-day. For example, if you start a run at 08:00 and want a nightly pause from 19:00–03:00, enter start/end hours `11` and `19` (11 and 19 hours after launch) or use the GUI schedule generator, which outputs the correctly offset values.
+- `busyTimesStart` / `busyTimesEnd` values in `config.json` are expressed as **hours from when you launch the optimizer**, not clock-of-day. For example, if you start a run at 08:00 and want a nightly pause from 19:00–03:00, enter start/end hours `11` and `19` (11 and 19 hours after launch) or use the GUI schedule generator, which outputs the correctly offset values. These fields now accept either decimal hours (`11`, `19.5`) or `HH:MM` strings (`19:00`, `03:30`) and we’ll convert them automatically.
 - To disable log file output, uncheck **Write log file** in the GUI before exporting your configuration.
 
