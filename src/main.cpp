@@ -250,18 +250,28 @@ void nameUpgrades() {
     }
     upgradeNames[20] = "Complete";
 }
-vector <int> adjustFullPath(vector<int>& levels){ // not thread-safe
-    if (levels.size()>1) levels[1]--; // Adjust first level because it always starts at 1
+void adjustFullPath(const vector<int>& startingLevels){ // not thread-safe
+    vector<int> levels = startingLevels;
+    if (levels.size() > 1 && levels[1] > 0) {
+        levels[1]--; // Adjust first level because it always starts at 1
+    }
     auto it = upgradePath.begin();
     while (it != upgradePath.end()) {
-        if (levels[*it] > 0) {
-            levels[*it]--;
+        const int upgrade = *it;
+        if (upgrade < 0 || upgrade >= static_cast<int>(levels.size())) {
+            ++it;
+            continue;
+        }
+        if (levels[upgrade] > 0) {
+            levels[upgrade]--;
             it = upgradePath.erase(it);
         } else {
             ++it;
         }
     }
-    return levels;
+    if (upgradePath.empty() || upgradePath.back() != NUM_RESOURCES * 2) {
+        upgradePath.push_back(NUM_RESOURCES * 2);
+    }
 }
 string formatResultsReport(const vector<int>& path,
                           const vector<int>& simulationLevels,
@@ -760,7 +770,7 @@ int main() {
     preprocessBusyTimes(busyTimesStart, busyTimesEnd);
 
     if (isFullPath) {
-        currentLevels = adjustFullPath(currentLevels);
+        adjustFullPath(currentLevels);
     }
     if (upgradePath.empty()) {
         upgradePath = generateRandomPath();
