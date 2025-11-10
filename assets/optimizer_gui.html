@@ -12,6 +12,8 @@
     .card{background:var(--card);border:1px solid #1c2533;border-radius:14px;padding:16px;margin-bottom:16px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
     .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
     .row{display:grid;grid-template-columns: 260px 1fr;align-items:center;gap:8px;margin:6px 0}
+    .row.multi{align-items:flex-start}
+    .row .checkCol{display:flex;flex-wrap:wrap;gap:8px 16px}
     .row .checkCol label{display:inline-flex;align-items:center;margin-right:12px;gap:6px;font-size:.95rem}
     .resgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
     .upgrid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
@@ -69,7 +71,7 @@
             <div class="row"><label>FREE_EXP_WEIGHT</label><input id="FREE_EXP_WEIGHT" type="number" step="any" value="0.00006"></div>
             <div class="row"><label>PET_STONES_WEIGHT</label><input id="PET_STONES_WEIGHT" type="number" step="any" value="0.000045"></div>
             <div class="row"><label>GROWTH_WEIGHT</label><input id="GROWTH_WEIGHT" type="number" step="any" value="0.00007"></div>
-            <div class="row"><label>Flags</label>
+            <div class="row multi"><label>Flags</label>
               <div>
                 <label><input type="checkbox" id="isFullPath" checked> isFullPath</label>
                 <label style="margin-left:10px"><input type="checkbox" id="allowSpeedUpgrades" checked> allowSpeedUpgrades</label>
@@ -169,7 +171,7 @@
       <div class="card">
         <h2>Logging &amp; Runtime</h2>
         <p class="muted">Configure how the optimizer writes progress updates and whether it pauses after finishing.</p>
-        <div class="row">
+        <div class="row multi">
           <label>Log outputs</label>
           <div class="checkCol">
             <label><input type="checkbox" id="logToConsole" checked> Console window</label>
@@ -181,7 +183,7 @@
           <label>Log file path</label>
           <input id="logFilePath" type="text" value="logs/run_latest.txt" placeholder="logs/run_latest.txt">
         </div>
-        <div class="row">
+        <div class="row multi">
           <label>Pause on exit</label>
           <div class="checkCol">
             <label><input type="checkbox" id="pauseOnExit"> Keep window open after the run completes</label>
