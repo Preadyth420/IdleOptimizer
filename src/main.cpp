@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <cmath>
 
+#include "constants.hpp"
 #include "config_loader.hpp"
 using namespace std;
 typedef long long ll;
