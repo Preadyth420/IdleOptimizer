@@ -178,6 +178,12 @@ public:
             }
         }
     }
+    bool isConsoleEnabled() const {
+        return logToConsole && consoleOut;
+    }
+    bool isFileEnabled() const {
+        return logToFile && fileOut.good();
+    }
     void logLine(const string& message) const {
         if (logToConsole && consoleOut) {
             (*consoleOut) << message;
@@ -252,25 +258,30 @@ vector <int> adjustFullPath(vector<int>& levels){ // not thread-safe
     }
     return levels;
 }
-void printFormattedResults(vector<int>& path, vector<int>& simulationLevels, vector<double>& simulationResources, double finalScore) {
-    cout << "Upgrade Path: \n{";
-    printVector(path);
-    cout << "}\n";
-    cout << "Final Resource Counts: ";
-    printVector(simulationResources);
-    cout << "\n";
-    cout << "Final Upgrade Levels: ";
-    printVector(simulationLevels);
-    cout << "\n";
-    cout << "Event Currency: " << min(simulationResources[9], EVENT_CURRENCY_CAP) << "\n";
-    cout << "Free Exp (" << DLs << " DLs): "
+string formatResultsReport(const vector<int>& path,
+                          const vector<int>& simulationLevels,
+                          const vector<double>& simulationResources,
+                          double finalScore) {
+    ostringstream out;
+    out << "Upgrade Path: \n{";
+    printVector(path, out);
+    out << "}\n";
+    out << "Final Resource Counts: ";
+    printVector(simulationResources, out);
+    out << "\n";
+    out << "Final Upgrade Levels: ";
+    printVector(simulationLevels, out);
+    out << "\n";
+    out << "Event Currency: " << min(simulationResources[9], EVENT_CURRENCY_CAP) << "\n";
+    out << "Free Exp (" << DLs << " DLs): "
         << simulationResources[7] * (500.0 + DLs) / 5.0
         << " (" << simulationResources[7] << " levels * cycles)" << "\n";
-    cout << "Pet Stones: " << simulationResources[6] << "\n";
-    cout << "Growth (" << UNLOCKED_PETS << " pets): "
+    out << "Pet Stones: " << simulationResources[6] << "\n";
+    out << "Growth (" << UNLOCKED_PETS << " pets): "
         << simulationResources[8] * UNLOCKED_PETS / 100.0
         << " (" << simulationResources[8] << " levels * cycles)" << "\n";
-    cout << "Score: " << finalScore << "\n\n";
+    out << "Score: " << finalScore << "\n\n";
+    return out.str();
 }
 void preprocessBusyTimes(const vector<double>& startHours, const vector<double>& endHours) {
     for (size_t i = 0; i < startHours.size() && i < endHours.size(); ++i) {
@@ -433,12 +444,24 @@ double evaluatePath(vector<int>& path, const SearchContext& context){
     simulateUpgradePath(path, testLevels, testResources);
     return calculateScore(testResources);
 }
-void calculateFinalPath(vector<int>& path){
+void calculateFinalPath(vector<int>& path, Logger* logger = nullptr){
     vector<int>     simulationLevels(currentLevels);
     vector<double>  simulationResources(resourceCounts);
-    simulateUpgradePath(path, simulationLevels, simulationResources, true);
+    bool displayUpgrades = true;
+    if (logger && !logger->isConsoleEnabled()) {
+        displayUpgrades = false;
+    }
+    simulateUpgradePath(path, simulationLevels, simulationResources, displayUpgrades);
     double simulationScore = calculateScore(simulationResources);
-    printFormattedResults(path, simulationLevels, simulationResources, simulationScore);
+    string report = formatResultsReport(path, simulationLevels, simulationResources, simulationScore);
+    if (!logger) {
+        cout << report;
+    } else {
+        if (!logger->isConsoleEnabled()) {
+            cout << report;
+        }
+        logger->logLine(report);
+    }
 }
 
 // ------------ Moves ------------
@@ -648,13 +671,30 @@ int main() {
     busyTimesEnd = cfg.busyTimesEnd;
     for (int i=0;i<NUM_RESOURCES;i++) resourceNames[i] = cfg.resourceNames[i];
 
-    // Show mapping
-    cout << "Resource mapping: ";
-    for (int i=0;i<NUM_RESOURCES;i++){
-        cout << i << "=" << resourceNames[i];
-        if (i+1<NUM_RESOURCES) cout << ", ";
+    Logger logger(outputInterval,
+                  logToConsoleEnabled,
+                  logToFileEnabled ? logFilePath : string(),
+                  appendToLogFile);
+    Logger* loggerPtr = &logger;
+    if (logToFileEnabled) {
+        const string logMsg = string("Improvement log file: ") + logFilePath + "\n";
+        if (!loggerPtr->isConsoleEnabled()) {
+            cout << logMsg;
+        }
+        loggerPtr->logLine(logMsg);
     }
-    cout << "\n";
+    ostringstream mapping;
+    mapping << "Resource mapping: ";
+    for (int i=0;i<NUM_RESOURCES;i++){
+        mapping << i << "=" << resourceNames[i];
+        if (i+1<NUM_RESOURCES) mapping << ", ";
+    }
+    mapping << "\n";
+    const string mappingStr = mapping.str();
+    if (!loggerPtr->isConsoleEnabled()) {
+        cout << mappingStr;
+    }
+    loggerPtr->logLine(mappingStr);
 
     nameUpgrades();
     preprocessBusyTimes(busyTimesStart, busyTimesEnd);
@@ -667,27 +707,28 @@ int main() {
     }
     pruneCappedSpeedUpgrades(upgradePath, currentLevels);
 
-    calculateFinalPath(upgradePath);
+    calculateFinalPath(upgradePath, loggerPtr);
 
     if (runOptimization) {
         random_device seed;
         mt19937 randomEngine(seed());
-        if (logToFileEnabled) {
-            cout << "Improvement log file: " << logFilePath << "\n";
-        }
-        Logger logger(outputInterval,
-                      logToConsoleEnabled,
-                      logToFileEnabled ? logFilePath : string(),
-                      appendToLogFile);
-        SearchContext context{logger, resourceCounts, currentLevels};
+        SearchContext context{*loggerPtr, resourceCounts, currentLevels};
         OptimizationPackage package = {upgradePath, 0, move(randomEngine)};
         optimizeUpgradePath(package, context, maxOptimizationIterations);
         upgradePath = move(package.path);
     }
 
     pruneCappedSpeedUpgrades(upgradePath, currentLevels);
-    calculateFinalPath(upgradePath);
-    cout << "Done.\n";
+    calculateFinalPath(upgradePath, loggerPtr);
+    const string doneMessage = string("Done.\n");
+    if (loggerPtr) {
+        if (!loggerPtr->isConsoleEnabled()) {
+            cout << doneMessage;
+        }
+        loggerPtr->logLine(doneMessage);
+    } else {
+        cout << doneMessage;
+    }
     if (pauseOnExit) {
         cout << "Press Enter to close..." << flush;
         cin.clear();
