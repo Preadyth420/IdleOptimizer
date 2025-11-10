@@ -113,6 +113,11 @@
       <div class="card">
         <h2>Weekly Busy Schedule</h2>
         <p class="muted">Define when you’re <b>busy</b> (cannot buy). We expand this across the whole event and write the arrays for you.</p>
+        <div class="row">
+          <label>Optimizer start time</label>
+          <input type="time" id="optimizerStartTime" value="08:00">
+        </div>
+        <div class="mini" style="margin-bottom:8px">We convert 24-hour clock entries into hours after your optimizer start time. Example: start the optimizer at 08:00 &rarr; a 19:00 busy window begins at hour 11.</div>
         <div style="display:flex;gap:14px;align-items:center;margin:8px 0">
           <label><input type="radio" name="schedMode" id="modeDaily" checked> Same times every day</label>
           <label><input type="radio" name="schedMode" id="modePerDay"> Custom per-day (Mon–Sun)</label>
@@ -169,7 +174,7 @@
           <div class="checkCol">
             <label><input type="checkbox" id="logToConsole" checked> Console window</label>
             <label><input type="checkbox" id="logToFile"> Write log file</label>
-            <label><input type="checkbox" id="appendLogFile"> Append to log file</label>
+            <label><input type="checkbox" id="appendLogFile"> Add to existing log file (append)</label>
           </div>
         </div>
         <div class="row">
@@ -182,7 +187,13 @@
             <label><input type="checkbox" id="pauseOnExit"> Keep window open after the run completes</label>
           </div>
         </div>
-        <p class="muted mini" id="logFileHint">We create folders automatically when writing the file. Disable log file output if you don't want anything written to disk.</p>
+        <div class="row">
+          <label>Max optimization iterations</label>
+          <input id="maxOptimizationIterations" type="number" min="0" value="20000">
+        </div>
+        <p class="muted mini" id="logFileHint">We create folders automatically when writing the file. Uncheck "Write log file" if you don't want anything written to disk.</p>
+        <div class="mini" id="logSummary" style="margin-top:12px"></div>
+        <div class="preview" id="logPreview" style="margin-top:8px"></div>
       </div>
       <div class="card">
         <h2>Resource Names</h2>
@@ -293,10 +304,21 @@
       return Math.trunc(n);
     }).filter(x=>x!==null);
   }
+  function parseClockHours(text){
+    const m = /^([+-]?\d+):(\d{2})$/.exec(text);
+    if(!m) return null;
+    const hours = Number(m[1]);
+    const mins = Number(m[2]);
+    if(!Number.isFinite(hours) || !Number.isFinite(mins) || mins >= 60) return null;
+    const sign = hours < 0 ? -1 : 1;
+    return hours + sign * (mins / 60);
+  }
   function parseCSVNums(text, vars){
     if(!text.trim()) return [];
     return text.split(',').map(s=>{
       const t = s.trim(); if(!t) return null;
+      const clock = parseClockHours(t);
+      if(clock !== null) return clock;
       const v = isAllowedExpr(t) ? evalExpr(t, vars) : t;
       const n = Number(v);
       if(!isFinite(n)) throw new Error('Invalid number: '+t);
@@ -308,6 +330,7 @@
   function getScalars(){
     const fileEnabled = $('logToFile').checked;
     const filePath = $('logFilePath').value.trim();
+    const iterationValue = Math.trunc(+$('maxOptimizationIterations').value || 0);
     return {
       EVENT_DURATION_DAYS: +$('EVENT_DURATION_DAYS').value,
       EVENT_DURATION_HOURS: +$('EVENT_DURATION_HOURS').value,
@@ -328,6 +351,7 @@
       appendLogFile: fileEnabled && $('appendLogFile').checked,
       logFilePath: filePath || 'logs/run_latest.txt',
       pauseOnExit: $('pauseOnExit').checked,
+      maxOptimizationIterations: Math.max(0, iterationValue),
     };
   }
   function computedFreeExp(DLs){ return 1/((500+DLs)/5); }
@@ -439,13 +463,23 @@
     const eventDays = Math.max(1, +$('EVENT_DURATION_DAYS').value || 14);
     const totalHours = eventDays * 24;
     const pairs = [];
+    const startHour = parseTime($('optimizerStartTime').value);
+
+    const toRelative = (clockHour) => {
+      if (isNaN(clockHour)) return NaN;
+      if (isNaN(startHour)) return clockHour;
+      let delta = clockHour - startHour;
+      delta = ((delta % 24) + 24) % 24;
+      return delta;
+    };
 
     function addWrapped(dayIdx, sh, eh){
-      if (isNaN(sh) || isNaN(eh) || sh===eh) return;
-      const start = dayIdx*24 + sh;
-      // duration wraps if end <= startHour
-      const dur = (eh > sh) ? (eh - sh) : (24 - sh + eh);
-      const end  = start + dur;
+      const relStart = toRelative(sh);
+      const relEnd = toRelative(eh);
+      if (isNaN(relStart) || isNaN(relEnd) || relStart===relEnd) return;
+      let start = dayIdx*24 + relStart;
+      let end   = dayIdx*24 + relEnd;
+      if (end <= start) end += 24;
       if (start < totalHours) pairs.push([start, Math.min(end, totalHours)]);
     }
 
@@ -552,6 +586,7 @@
     set('appendLogFile', data.appendLogFile ?? false);
     set('logFilePath', data.logFilePath ?? 'logs/run_latest.txt');
     set('pauseOnExit', data.pauseOnExit ?? false);
+    set('maxOptimizationIterations', data.maxOptimizationIterations ?? 20000);
 
     updateLogControls();
 
@@ -574,11 +609,41 @@
     $('busyTimesEnd').value   = (data.busyTimesEnd   || []).join(', ');
   }
 
+  function refreshLogSummary(){
+    const interval = Math.max(0, +$('outputInterval').value || 0);
+    const logToConsole = $('logToConsole').checked;
+    const logToFile = $('logToFile').checked;
+    const appendMode = $('appendLogFile').checked;
+    const path = ($('logFilePath').value || 'logs/run_latest.txt').trim();
+    const iterations = Math.max(0, Math.trunc(+$('maxOptimizationIterations').value || 0));
+
+    const destinations = [];
+    if (logToConsole) destinations.push('console window');
+    if (logToFile) destinations.push(`file (${appendMode ? 'append' : 'overwrite'}: ${path})`);
+    if (!destinations.length) destinations.push('no active destinations');
+
+    const intervalText = interval <= 0
+      ? 'every improvement is logged immediately'
+      : `logs every ${interval} ms (${(interval / 1000).toFixed(1)} s)`;
+
+    $('logSummary').textContent = `Current logging: ${destinations.join(', ')} — ${intervalText}. Max iterations: ${iterations || 'disabled (0)'}.`;
+
+    const preview = [];
+    preview.push('[Logger] Interval: ' + (interval <= 0 ? 'immediate' : `${interval} ms`));
+    preview.push('[Logger] Destinations: ' + destinations.join(', '));
+    if (!logToFile) {
+      preview.push('[Hint] Enable "Write log file" to keep a history on disk.');
+    }
+    preview.push('[Optimizer] Max iterations without improvement: ' + (iterations > 0 ? iterations : '0 (stops immediately)'));
+    $('logPreview').textContent = preview.join('\n');
+  }
+
   function updateLogControls(){
     const fileEnabled = $('logToFile').checked;
     $('logFilePath').disabled = !fileEnabled;
     $('appendLogFile').disabled = !fileEnabled;
     $('logFileHint').style.opacity = fileEnabled ? '1' : '0.65';
+    refreshLogSummary();
   }
 
   // CSV mirror buttons now *work*
@@ -615,12 +680,18 @@
   function onScalarChange(){ updateComputed(); }
   ['DLs','UNLOCKED_PETS'].forEach(id => $(id).addEventListener('input', onScalarChange));
   $('logToFile').addEventListener('change', updateLogControls);
+  $('logToConsole').addEventListener('change', refreshLogSummary);
+  $('appendLogFile').addEventListener('change', refreshLogSummary);
+  $('logFilePath').addEventListener('input', refreshLogSummary);
+  $('outputInterval').addEventListener('input', refreshLogSummary);
+  $('maxOptimizationIterations').addEventListener('input', refreshLogSummary);
   buildDailyBox();
   buildPerDayBox();
   buildNamesGrid();
   refreshResourceLabels();
   buildUpgradeGrids();
   updateComputed();
+  refreshLogSummary();
   populate({
     currentLevels: Array(21).fill(0),
     resourceCounts: [0,500000,0,0,0,0,0,1,1,0],

@@ -14,16 +14,16 @@
 #include <filesystem>
 #include <cmath>
 
+#include "constants.hpp"
 #include "config_loader.hpp"
 using namespace std;
 typedef long long ll;
 
-// ======================= COMPILED EVENT DURATION =======================
-// Flat 14-day event at compile-time to keep TOTAL_SECONDS constexpr.
-const int EVENT_DURATION_DAYS = 14;
-const int EVENT_DURATION_HOURS = 0;
-const int EVENT_DURATION_MINUTES = 0;
-const int EVENT_DURATION_SECONDS = 0;
+// ======================= EVENT DURATION (runtime) ======================
+int eventDurationDays = 14;
+int eventDurationHours = 0;
+int eventDurationMinutes = 0;
+int eventDurationSeconds = 0;
 
 // ======================= GLOBAL SETTINGS (runtime) =====================
 int UNLOCKED_PETS = 100;
@@ -43,20 +43,20 @@ bool logToFileEnabled = false;
 bool appendToLogFile = false;
 string logFilePath = "logs/run_latest.txt";
 bool pauseOnExit = false;
+int maxOptimizationIterations = 20000;
 
 // END USER SETTINGS (runtime) ------------------------------------------
 
 // =================== PROGRAM SETTINGS ==================================
-constexpr int NUM_RESOURCES = 10;
 array<string, NUM_RESOURCES> resourceNames = {
     "Tomb","Bat","Ghost","Witch_Book","Witch_Soup",
     "Eye","PET_STONES","FREE_EXP","GROWTH","Black_Cat"
 };
 constexpr double INFINITY_VALUE = (1e100);
-constexpr int TOTAL_SECONDS = ((EVENT_DURATION_DAYS)*24*3600+(EVENT_DURATION_HOURS)*3600+(EVENT_DURATION_MINUTES)*60+EVENT_DURATION_SECONDS);
+int totalSeconds = ((14)*24*3600 + 0*3600 + 0*60 + 0);
 
 map<int, string> upgradeNames;
-array<double, TOTAL_SECONDS> timeNeededSeconds{};
+vector<double> timeNeededSeconds;
 
 // Vectors filled from config.json
 vector<int> currentLevels(21, 0);     // 10 level, 10 speed, 1 dummy
@@ -66,6 +66,71 @@ vector<double> busyTimesStart;
 vector<double> busyTimesEnd;
 
 // =================== UTILITY FUNCTIONS =================================
+bool pathRespectsSpeedCaps(const vector<int>& path, const vector<int>& startingLevels) {
+    vector<int> simulatedLevels = startingLevels;
+    for (int upgrade : path) {
+        if (upgrade < 0) {
+            return false;
+        }
+        if (upgrade == NUM_RESOURCES * 2) {
+            continue; // Sentinel "Complete" upgrade is always allowed
+        }
+        if (upgrade >= NUM_RESOURCES * 2) {
+            return false;
+        }
+        if (upgrade >= static_cast<int>(simulatedLevels.size())) {
+            return false;
+        }
+        if (upgrade >= NUM_RESOURCES) {
+            if (simulatedLevels[upgrade] >= SPEED_LEVEL_CAP) {
+                return false;
+            }
+            simulatedLevels[upgrade]++;
+        } else {
+            simulatedLevels[upgrade]++;
+        }
+    }
+    return true;
+}
+
+void pruneCappedSpeedUpgrades(vector<int>& path, const vector<int>& startingLevels) {
+    if (path.empty()) {
+        return;
+    }
+
+    vector<int> sanitized;
+    sanitized.reserve(path.size());
+    vector<int> simulatedLevels = startingLevels;
+
+    for (int upgrade : path) {
+        if (upgrade == NUM_RESOURCES * 2) {
+            sanitized.push_back(upgrade);
+            break;
+        }
+        if (upgrade < 0 || upgrade >= NUM_RESOURCES * 2) {
+            continue;
+        }
+        if (upgrade >= static_cast<int>(simulatedLevels.size())) {
+            continue;
+        }
+        if (upgrade >= NUM_RESOURCES) {
+            if (simulatedLevels[upgrade] >= SPEED_LEVEL_CAP) {
+                continue;
+            }
+            simulatedLevels[upgrade] = min(SPEED_LEVEL_CAP, simulatedLevels[upgrade] + 1);
+        } else {
+            simulatedLevels[upgrade]++;
+        }
+        sanitized.push_back(upgrade);
+    }
+
+    if (sanitized.empty() || sanitized.back() != NUM_RESOURCES * 2) {
+        sanitized.push_back(NUM_RESOURCES * 2);
+    }
+
+    path.swap(sanitized);
+}
+
 template <typename T>
 void printVector(const vector<T>& x, ostream& out = cout) {
     for (size_t i=0;i<x.size();++i){
@@ -112,11 +177,23 @@ public:
             }
         }
     }
+    bool isConsoleEnabled() const {
+        return logToConsole && consoleOut;
+    }
+    bool isFileEnabled() const {
+        return logToFile && fileOut.good();
+    }
     void logLine(const string& message) const {
         if (logToConsole && consoleOut) {
             (*consoleOut) << message;
             consoleOut->flush();
         }
+        if (logToFile && fileOut.good()) {
+            fileOut << message;
+            fileOut.flush();
+        }
+    }
+    void logLineToFileOnly(const string& message) const {
         if (logToFile && fileOut.good()) {
             fileOut << message;
             fileOut.flush();
@@ -136,7 +213,7 @@ public:
     }
 };
 struct SearchContext {
-    Logger logger;
+    Logger& logger;
     const vector<double>& resources;
     const vector<int>& levels;
 };
@@ -186,43 +263,59 @@ vector <int> adjustFullPath(vector<int>& levels){ // not thread-safe
     }
     return levels;
 }
-void printFormattedResults(vector<int>& path, vector<int>& simulationLevels, vector<double>& simulationResources, double finalScore) {
-    cout << "Upgrade Path: \n{";
-    printVector(path);
-    cout << "}\n";
-    cout << "Final Resource Counts: ";
-    printVector(simulationResources);
-    cout << "\n";
-    cout << "Final Upgrade Levels: ";
-    printVector(simulationLevels);
-    cout << "\n";
-    cout << "Event Currency: " << simulationResources[9] << "\n";
-    cout << "Free Exp (" << DLs << " DLs): "
+string formatResultsReport(const vector<int>& path,
+                          const vector<int>& simulationLevels,
+                          const vector<double>& simulationResources,
+                          double finalScore) {
+    ostringstream out;
+    out << "Upgrade Path: \n{";
+    printVector(path, out);
+    out << "}\n";
+    out << "Final Resource Counts: ";
+    printVector(simulationResources, out);
+    out << "\n";
+    out << "Final Upgrade Levels: ";
+    printVector(simulationLevels, out);
+    out << "\n";
+    out << "Event Currency: " << min(simulationResources[9], EVENT_CURRENCY_CAP) << "\n";
+    out << "Free Exp (" << DLs << " DLs): "
         << simulationResources[7] * (500.0 + DLs) / 5.0
         << " (" << simulationResources[7] << " levels * cycles)" << "\n";
-    cout << "Pet Stones: " << simulationResources[6] << "\n";
-    cout << "Growth (" << UNLOCKED_PETS << " pets): "
+    out << "Pet Stones: " << simulationResources[6] << "\n";
+    out << "Growth (" << UNLOCKED_PETS << " pets): "
         << simulationResources[8] * UNLOCKED_PETS / 100.0
         << " (" << simulationResources[8] << " levels * cycles)" << "\n";
-    cout << "Score: " << finalScore << "\n\n";
+    out << "Score: " << finalScore << "\n\n";
+    return out.str();
 }
 void preprocessBusyTimes(const vector<double>& startHours, const vector<double>& endHours) {
+    if (static_cast<int>(timeNeededSeconds.size()) != totalSeconds) {
+        timeNeededSeconds.assign(max(1, totalSeconds), 0.0);
+    } else {
+        fill(timeNeededSeconds.begin(), timeNeededSeconds.end(), 0.0);
+    }
     for (size_t i = 0; i < startHours.size() && i < endHours.size(); ++i) {
         int startSec = static_cast<int>(startHours[i] * 3600.0);
         int endSec = static_cast<int>(endHours[i] * 3600.0);
-        startSec = min(startSec, TOTAL_SECONDS - 1);
-        endSec = min(endSec, TOTAL_SECONDS - 1);
-        for (int s = startSec; s <= endSec; ++s) {
+        startSec = clamp(startSec, 0, max(0, totalSeconds - 1));
+        endSec = clamp(endSec, 0, max(0, totalSeconds - 1));
+        if (endSec < startSec) {
+            swap(startSec, endSec);
+        }
+        for (int s = startSec; s <= endSec && s < totalSeconds; ++s) {
             timeNeededSeconds[s] = endSec - s;
         }
     }
 }
 inline double additionalTimeNeeded(double expectedTimeSeconds) {
     int idx = static_cast<int>(expectedTimeSeconds);
-    if (idx >= TOTAL_SECONDS) return 0.0;
+    if (idx < 0 || idx >= static_cast<int>(timeNeededSeconds.size())) return 0.0;
     return timeNeededSeconds[idx];
 }
-vector <int> generateRandomPath(int length = TOTAL_SECONDS/3600) {
+vector <int> generateRandomPath(int length = -1) {
+    if (length < 0) {
+        length = max(1, totalSeconds / 3600);
+    }
     vector<int> randomPath = {};
     for (int i = 0; i < length; i++) {
         randomPath.push_back(rand() % NUM_RESOURCES + 10 * (rand() % 2));
@@ -230,15 +323,29 @@ vector <int> generateRandomPath(int length = TOTAL_SECONDS/3600) {
     randomPath.push_back(NUM_RESOURCES * 2);
     return randomPath;
 }
-void readoutUpgrade(int upgradeType, vector<int>& levels, int elapsedSeconds) {
-    cout << upgradeNames[upgradeType] << " " << levels[upgradeType]
-        << " " << (int)elapsedSeconds/24/3600 << " days, "
-        << (int)elapsedSeconds/3600%24 << " hours, "
-        << (int)elapsedSeconds/60%60 << " minutes" << "\n";
+string formatUpgradeReadout(int upgradeType, const vector<int>& levels, int elapsedSeconds) {
+    ostringstream ss;
+    const int days = elapsedSeconds / (24 * 3600);
+    const int hours = (elapsedSeconds / 3600) % 24;
+    const int minutes = (elapsedSeconds / 60) % 60;
+    ss << upgradeNames[upgradeType] << " " << levels[upgradeType]
+       << " " << days << " days, " << hours << " hours, " << minutes << " minutes";
+    return ss.str();
+}
+
+inline void clampEventCurrency(vector<double>& resources) {
+    if (resources.size() > 9) {
+        resources[9] = min(resources[9], EVENT_CURRENCY_CAP);
+    }
 }
 
 // =================== ALGORITHM FUNCTIONS ===============================
 double performUpgrade(vector<int>& levels, vector<double>& resources, int upgradeType, double& remainingTime) {
+    if (upgradeType >= NUM_RESOURCES && upgradeType < NUM_RESOURCES * 2) {
+        if (levels[upgradeType] >= SPEED_LEVEL_CAP) {
+            return 0.0;
+        }
+    }
     constexpr double cycleTimeMultiplier[10] = {
         1.0/3.0, 1.0, 1.0/3.0, 1.0/3.0, 1.0/3.0,
         1.0/3.0, 1.0/1200.0, 1.0/2500.0, 1.0/1800.0, 1.0/5000.0
@@ -285,7 +392,7 @@ double performUpgrade(vector<int>& levels, vector<double>& resources, int upgrad
     productionRates[9] = levels[9] * cycleTimeMultiplier[9] * speedMultipliers[levels[19]];
 
     double timeNeeded = 0;
-    double timeElapsed = TOTAL_SECONDS - remainingTime;
+    double timeElapsed = totalSeconds - remainingTime;
     for (int i = 0; i < NUM_RESOURCES; i++) {
         double neededResources = cost[i] - resources[i];
         if (neededResources <= 0) continue;
@@ -295,9 +402,8 @@ double performUpgrade(vector<int>& levels, vector<double>& resources, int upgrad
         }
         timeNeeded = max(timeNeeded, neededResources / productionRates[i]);
     }
-    const double busyLookupTime = timeElapsed + timeNeeded;
-    const int busyLookupIndex = static_cast<int>(std::clamp(busyLookupTime, 0.0, static_cast<double>(TOTAL_SECONDS - 1)));
-    if (0 <= busyLookupIndex && busyLookupIndex < TOTAL_SECONDS){
+    int busyLookupIndex = static_cast<int>(timeElapsed + timeNeeded);
+    if (0 <= busyLookupIndex && busyLookupIndex < totalSeconds){
         timeNeeded += timeNeededSeconds[busyLookupIndex];
     };
 
@@ -306,6 +412,7 @@ double performUpgrade(vector<int>& levels, vector<double>& resources, int upgrad
         for (int i=0;i<NUM_RESOURCES;i++){
             resources[i] += productionRates[i] * timeNeeded;
         }
+        clampEventCurrency(resources);
         return timeNeeded;
     }
 
@@ -313,21 +420,33 @@ double performUpgrade(vector<int>& levels, vector<double>& resources, int upgrad
         resources[i] += productionRates[i] * timeNeeded - cost[i];
     }
     levels[upgradeType]++;
+    clampEventCurrency(resources);
     return timeNeeded;
 }
-double simulateUpgradePath(vector<int>& path, vector<int>& levels, vector<double>& resources, bool display = false) {
+double simulateUpgradePath(vector<int>& path,
+                          vector<int>& levels,
+                          vector<double>& resources,
+                          bool display = false,
+                          vector<string>* upgradeLog = nullptr) {
     thread_local double time;
-    time = TOTAL_SECONDS;
+    time = totalSeconds;
     for (auto upgradeType : path) {
         if (time < 1e-3) return 0;
-        if (upgradeType >= NUM_RESOURCES && levels[upgradeType] >= 10) {
+        if (upgradeType >= NUM_RESOURCES && levels[upgradeType] >= SPEED_LEVEL_CAP) {
             continue; // Skip speed upgrades that are already maxed out
         }
         double timeTaken = performUpgrade(levels, resources, upgradeType, time);
         time -= timeTaken;
         if (display) {
-            const int elapsedSeconds = static_cast<int>(TOTAL_SECONDS - time);
-            readoutUpgrade(upgradeType, levels, elapsedSeconds);
+            const int elapsedSeconds = static_cast<int>(totalSeconds - time);
+            const string line = formatUpgradeReadout(upgradeType, levels, elapsedSeconds);
+            cout << line << "\n";
+            if (upgradeLog) {
+                upgradeLog->push_back(line);
+            }
+        } else if (upgradeLog) {
+            const int elapsedSeconds = static_cast<int>(totalSeconds - time);
+            upgradeLog->push_back(formatUpgradeReadout(upgradeType, levels, elapsedSeconds));
         }
     }
     return time;
@@ -337,13 +456,17 @@ double calculateScore(vector<double>& resources, bool display = false) {
     for (int i = 0; i < NUM_RESOURCES; i++) {
         score += resources[i] * 1e-15;
     }
-    score += (min(resources[9], 10000.0) + max(0.0, (resources[9] - 10000)) * 0.01) * (EVENT_CURRENCY_WEIGHT);
+    const double cappedEventCurrency = min(resources[9], EVENT_CURRENCY_CAP);
+    score += (cappedEventCurrency + max(0.0, (resources[9] - EVENT_CURRENCY_CAP)) * 0.01) * (EVENT_CURRENCY_WEIGHT);
     score += resources[7] * (FREE_EXP_WEIGHT);     // Free EXP
     score += resources[8] * (GROWTH_WEIGHT);       // Growth
     score += resources[6] * (PET_STONES_WEIGHT);   // Pet Stones
     return score;
 }
 double evaluatePath(vector<int>& path, const SearchContext& context){
+    if (!pathRespectsSpeedCaps(path, context.levels)) {
+        return -numeric_limits<double>::infinity();
+    }
     thread_local vector<double> testResources = context.resources;
     thread_local vector<int> testLevels = context.levels;
     testResources = context.resources;
@@ -351,12 +474,41 @@ double evaluatePath(vector<int>& path, const SearchContext& context){
     simulateUpgradePath(path, testLevels, testResources);
     return calculateScore(testResources);
 }
-void calculateFinalPath(vector<int>& path){
+void calculateFinalPath(vector<int>& path, Logger* logger = nullptr){
     vector<int>     simulationLevels(currentLevels);
     vector<double>  simulationResources(resourceCounts);
-    simulateUpgradePath(path, simulationLevels, simulationResources, true);
+    bool displayUpgrades = true;
+    if (logger && !logger->isConsoleEnabled()) {
+        displayUpgrades = false;
+    }
+    vector<string> upgradeLines;
+    vector<string>* upgradeLogPtr = nullptr;
+    if (logger) {
+        if (logger->isFileEnabled() || !logger->isConsoleEnabled()) {
+            upgradeLogPtr = &upgradeLines;
+        }
+    }
+    simulateUpgradePath(path, simulationLevels, simulationResources, displayUpgrades, upgradeLogPtr);
+    if (logger && upgradeLogPtr) {
+        for (const string& line : upgradeLines) {
+            const string message = line + "\n";
+            if (displayUpgrades && logger->isConsoleEnabled()) {
+                logger->logLineToFileOnly(message);
+            } else {
+                logger->logLine(message);
+            }
+        }
+    }
     double simulationScore = calculateScore(simulationResources);
-    printFormattedResults(path, simulationLevels, simulationResources, simulationScore);
+    string report = formatResultsReport(path, simulationLevels, simulationResources, simulationScore);
+    if (!logger) {
+        cout << report;
+    } else {
+        if (!logger->isConsoleEnabled()) {
+            cout << report;
+        }
+        logger->logLine(report);
+    }
 }
 
 // ------------ Moves ------------
@@ -410,9 +562,10 @@ bool tryRemoveUpgrade(OptimizationPackage& package, SearchContext& context, Prop
     return false;
 }
 bool trySwapUpgrades(OptimizationPackage& package, SearchContext& context, Proposal* outProposal = nullptr) {
-    int pathLength = static_cast<int>(package.path.size()) - 1;
+    int pathLength = (int)package.path.size() - 1;
     thread_local vector<int> candidatePath;
     candidatePath = package.path;
+    double testScore;
     uniform_int_distribution<> swapDist(0, pathLength - 2);
     int startPos = swapDist(package.randomEngine);
     for (int i2 = 0; i2 < pathLength - 1; i2++) {
@@ -421,7 +574,7 @@ bool trySwapUpgrades(OptimizationPackage& package, SearchContext& context, Propo
             int j = (j2 + startPos) % (pathLength - 1);
             if (candidatePath[i] == candidatePath[j]) continue;
             swap(candidatePath[i], candidatePath[j]);
-            const double testScore = evaluatePath(candidatePath, context);
+            testScore = evaluatePath(candidatePath, context);
             if (testScore > package.score) {
                 if (outProposal) *outProposal = Proposal::Swap(i, j, testScore);
                 package.path = candidatePath;
@@ -436,8 +589,9 @@ bool trySwapUpgrades(OptimizationPackage& package, SearchContext& context, Propo
     return false;
 }
 bool tryRotateSubsequences(OptimizationPackage& package, SearchContext& context, Proposal* outProposal = nullptr) {
-    int pathLength = static_cast<int>(package.path.size()) - 1;
+    int pathLength = (int)package.path.size() - 1;
     thread_local vector<int> candidatePath;
+    double testScore;
     uniform_int_distribution<> rotateDist(0, pathLength - 3);
     int i = rotateDist(package.randomEngine);
     uniform_int_distribution<> rotateDist2(i+2, pathLength - 1);
@@ -448,7 +602,7 @@ bool tryRotateSubsequences(OptimizationPackage& package, SearchContext& context,
         bool isLeft = (k % 2 == 0);
         if(isLeft)  rotate(candidatePath.begin() + i, candidatePath.begin() + i + offset, candidatePath.begin() + j + 1);
         else        rotate(candidatePath.begin() + i, candidatePath.begin() + j - offset + 1, candidatePath.begin() + j + 1);
-        const double testScore = evaluatePath(candidatePath, context);
+        testScore = evaluatePath(candidatePath, context);
         int rotationPos = isLeft ? i + offset: j - offset + 1;
         if (testScore > package.score) {
             if (outProposal) *outProposal = Proposal::Rotate(i, j + 1, rotationPos, testScore);
@@ -464,7 +618,7 @@ bool exhaustRotateSubsequences(OptimizationPackage& package, SearchContext& cont
     int pathLength = (int)package.path.size() - 1;
     int maxIndex = pathLength - 1;
     thread_local vector<int> candidatePath;
-    double testScore;
+    double testScore = package.score;
     uniform_int_distribution<> rotateDist(0, maxIndex - 2);
     int i = rotateDist(package.randomEngine);
     for (int i2 = 0; i2 < maxIndex - 1; i2++){
@@ -479,7 +633,7 @@ bool exhaustRotateSubsequences(OptimizationPackage& package, SearchContext& cont
                 bool isLeft = (k % 2 == 0);
                 if(isLeft)  rotate(candidatePath.begin() + i3, candidatePath.begin() + i3 + offset, candidatePath.begin() + j3 + 1);
                 else        rotate(candidatePath.begin() + i3, candidatePath.begin() + j3 - offset + 1, candidatePath.begin() + j3 + 1);
-                double testScore = evaluatePath(candidatePath, context);
+                testScore = evaluatePath(candidatePath, context);
                 int rotationPos = isLeft ? i3 + offset: j3 - offset + 1;
                 if (testScore > package.score) {
                     if (outProposal) *outProposal = Proposal::Rotate(i3, j3+1, rotationPos, testScore);
@@ -499,6 +653,7 @@ void optimizeUpgradePath(OptimizationPackage& package, SearchContext& context, c
     mt19937 randomEngine(seed());
     int iterationCount = 0;
     int noImprovementStreak = 0;
+    package.score = evaluatePath(package.path, context);
     while (noImprovementStreak < maxIterations) {
         iterationCount++;
         bool improved = false;
@@ -537,6 +692,19 @@ int main() {
     AppConfig cfg = loadConfig("config.json");
 
     // Apply config to runtime globals
+    eventDurationDays = max(0, cfg.eventDurationDays);
+    eventDurationHours = max(0, cfg.eventDurationHours);
+    eventDurationMinutes = max(0, cfg.eventDurationMinutes);
+    eventDurationSeconds = max(0, cfg.eventDurationSeconds);
+    long long computedSeconds = static_cast<long long>(eventDurationDays) * 24LL * 3600LL
+        + static_cast<long long>(eventDurationHours) * 3600LL
+        + static_cast<long long>(eventDurationMinutes) * 60LL
+        + static_cast<long long>(eventDurationSeconds);
+    if (computedSeconds <= 0) {
+        computedSeconds = 1;
+    }
+    totalSeconds = static_cast<int>(min<long long>(computedSeconds, numeric_limits<int>::max()));
+
     UNLOCKED_PETS = cfg.UNLOCKED_PETS;
     DLs = cfg.DLs;
     outputInterval = cfg.outputInterval;
@@ -554,51 +722,73 @@ int main() {
         logFilePath = cfg.logFilePath;
     }
     pauseOnExit = cfg.pauseOnExit;
+    maxOptimizationIterations = cfg.maxOptimizationIterations;
     currentLevels = cfg.currentLevels;
     resourceCounts = cfg.resourceCounts;
+    clampEventCurrency(resourceCounts);
     upgradePath = cfg.upgradePath;
     busyTimesStart = cfg.busyTimesStart;
     busyTimesEnd = cfg.busyTimesEnd;
     for (int i=0;i<NUM_RESOURCES;i++) resourceNames[i] = cfg.resourceNames[i];
 
-    // Show mapping
-    cout << "Resource mapping: ";
-    for (int i=0;i<NUM_RESOURCES;i++){
-        cout << i << "=" << resourceNames[i];
-        if (i+1<NUM_RESOURCES) cout << ", ";
+    Logger logger(outputInterval,
+                  logToConsoleEnabled,
+                  logToFileEnabled ? logFilePath : string(),
+                  appendToLogFile);
+    Logger* loggerPtr = &logger;
+    if (logToFileEnabled) {
+        const string logMsg = string("Improvement log file: ") + logFilePath + "\n";
+        if (!loggerPtr->isConsoleEnabled()) {
+            cout << logMsg;
+        }
+        loggerPtr->logLine(logMsg);
     }
-    cout << "\n";
+    ostringstream mapping;
+    mapping << "Resource mapping: ";
+    for (int i=0;i<NUM_RESOURCES;i++){
+        mapping << i << "=" << resourceNames[i];
+        if (i+1<NUM_RESOURCES) mapping << ", ";
+    }
+    mapping << "\n";
+    const string mappingStr = mapping.str();
+    if (!loggerPtr->isConsoleEnabled()) {
+        cout << mappingStr;
+    }
+    loggerPtr->logLine(mappingStr);
 
     nameUpgrades();
     preprocessBusyTimes(busyTimesStart, busyTimesEnd);
 
-    if (upgradePath.empty()) {
-        upgradePath = generateRandomPath();
-    }
     if (isFullPath) {
         currentLevels = adjustFullPath(currentLevels);
     }
+    if (upgradePath.empty()) {
+        upgradePath = generateRandomPath();
+    }
+    pruneCappedSpeedUpgrades(upgradePath, currentLevels);
 
-    calculateFinalPath(upgradePath);
+    calculateFinalPath(upgradePath, loggerPtr);
 
     if (runOptimization) {
         random_device seed;
         mt19937 randomEngine(seed());
-        if (logToFileEnabled) {
-            cout << "Improvement log file: " << logFilePath << "\n";
-        }
-        Logger logger(outputInterval,
-                      logToConsoleEnabled,
-                      logToFileEnabled ? logFilePath : string(),
-                      appendToLogFile);
-        SearchContext context{logger, resourceCounts, currentLevels};
+        SearchContext context{*loggerPtr, resourceCounts, currentLevels};
         OptimizationPackage package = {upgradePath, 0, move(randomEngine)};
-        optimizeUpgradePath(package, context, 20000); // higher default
+        optimizeUpgradePath(package, context, maxOptimizationIterations);
         upgradePath = move(package.path);
     }
 
-    calculateFinalPath(upgradePath);
-    cout << "Done.\n";
+    pruneCappedSpeedUpgrades(upgradePath, currentLevels);
+    calculateFinalPath(upgradePath, loggerPtr);
+    const string doneMessage = string("Done.\n");
+    if (loggerPtr) {
+        if (!loggerPtr->isConsoleEnabled()) {
+            cout << doneMessage;
+        }
+        loggerPtr->logLine(doneMessage);
+    } else {
+        cout << doneMessage;
+    }
     if (pauseOnExit) {
         cout << "Press Enter to close..." << flush;
         cin.clear();
