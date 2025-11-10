@@ -66,6 +66,71 @@ vector<double> busyTimesStart;
 vector<double> busyTimesEnd;
 
 // =================== UTILITY FUNCTIONS =================================
+bool pathRespectsSpeedCaps(const vector<int>& path, const vector<int>& startingLevels) {
+    vector<int> simulatedLevels = startingLevels;
+    for (int upgrade : path) {
+        if (upgrade < 0) {
+            return false;
+        }
+        if (upgrade == NUM_RESOURCES * 2) {
+            continue; // Sentinel "Complete" upgrade is always allowed
+        }
+        if (upgrade >= NUM_RESOURCES * 2) {
+            return false;
+        }
+        if (upgrade >= static_cast<int>(simulatedLevels.size())) {
+            return false;
+        }
+        if (upgrade >= NUM_RESOURCES) {
+            if (simulatedLevels[upgrade] >= SPEED_LEVEL_CAP) {
+                return false;
+            }
+            simulatedLevels[upgrade]++;
+        } else {
+            simulatedLevels[upgrade]++;
+        }
+    }
+    return true;
+}
+
+void pruneCappedSpeedUpgrades(vector<int>& path, const vector<int>& startingLevels) {
+    if (path.empty()) {
+        return;
+    }
+
+    vector<int> sanitized;
+    sanitized.reserve(path.size());
+    vector<int> simulatedLevels = startingLevels;
+
+    for (int upgrade : path) {
+        if (upgrade == NUM_RESOURCES * 2) {
+            sanitized.push_back(upgrade);
+            break;
+        }
+        if (upgrade < 0 || upgrade >= NUM_RESOURCES * 2) {
+            continue;
+        }
+        if (upgrade >= static_cast<int>(simulatedLevels.size())) {
+            continue;
+        }
+        if (upgrade >= NUM_RESOURCES) {
+            if (simulatedLevels[upgrade] >= SPEED_LEVEL_CAP) {
+                continue;
+            }
+            simulatedLevels[upgrade] = min(SPEED_LEVEL_CAP, simulatedLevels[upgrade] + 1);
+        } else {
+            simulatedLevels[upgrade]++;
+        }
+        sanitized.push_back(upgrade);
+    }
+
+    if (sanitized.empty() || sanitized.back() != NUM_RESOURCES * 2) {
+        sanitized.push_back(NUM_RESOURCES * 2);
+    }
+
+    path.swap(sanitized);
+}
+
 template <typename T>
 void printVector(const vector<T>& x, ostream& out = cout) {
     for (size_t i=0;i<x.size();++i){
@@ -357,6 +422,9 @@ double calculateScore(vector<double>& resources, bool display = false) {
     return score;
 }
 double evaluatePath(vector<int>& path, const SearchContext& context){
+    if (!pathRespectsSpeedCaps(path, context.levels)) {
+        return -numeric_limits<double>::infinity();
+    }
     thread_local vector<double> testResources = context.resources;
     thread_local vector<int> testLevels = context.levels;
     testResources = context.resources;
@@ -514,6 +582,7 @@ void optimizeUpgradePath(OptimizationPackage& package, SearchContext& context, c
     mt19937 randomEngine(seed());
     int iterationCount = 0;
     int noImprovementStreak = 0;
+    package.score = evaluatePath(package.path, context);
     while (noImprovementStreak < maxIterations) {
         iterationCount++;
         bool improved = false;
@@ -595,6 +664,7 @@ int main() {
     if (isFullPath) {
         currentLevels = adjustFullPath(currentLevels);
     }
+    pruneCappedSpeedUpgrades(upgradePath, currentLevels);
 
     calculateFinalPath(upgradePath);
 
@@ -614,6 +684,7 @@ int main() {
         upgradePath = move(package.path);
     }
 
+    pruneCappedSpeedUpgrades(upgradePath, currentLevels);
     calculateFinalPath(upgradePath);
     cout << "Done.\n";
     if (pauseOnExit) {
