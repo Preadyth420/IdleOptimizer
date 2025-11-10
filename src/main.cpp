@@ -658,11 +658,11 @@ int main() {
     nameUpgrades();
     preprocessBusyTimes(busyTimesStart, busyTimesEnd);
 
-    if (upgradePath.empty()) {
-        upgradePath = generateRandomPath();
-    }
     if (isFullPath) {
         currentLevels = adjustFullPath(currentLevels);
+    }
+    if (upgradePath.empty()) {
+        upgradePath = generateRandomPath();
     }
     pruneCappedSpeedUpgrades(upgradePath, currentLevels);
 
