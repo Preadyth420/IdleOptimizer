@@ -48,7 +48,6 @@ int maxOptimizationIterations = 20000;
 // END USER SETTINGS (runtime) ------------------------------------------
 
 // =================== PROGRAM SETTINGS ==================================
-constexpr int NUM_RESOURCES = 10;
 array<string, NUM_RESOURCES> resourceNames = {
     "Tomb","Bat","Ghost","Witch_Book","Witch_Soup",
     "Eye","PET_STONES","FREE_EXP","GROWTH","Black_Cat"
@@ -197,7 +196,7 @@ void printFormattedResults(vector<int>& path, vector<int>& simulationLevels, vec
     cout << "Final Upgrade Levels: ";
     printVector(simulationLevels);
     cout << "\n";
-    cout << "Event Currency: " << simulationResources[9] << "\n";
+    cout << "Event Currency: " << min(simulationResources[9], EVENT_CURRENCY_CAP) << "\n";
     cout << "Free Exp (" << DLs << " DLs): "
         << simulationResources[7] * (500.0 + DLs) / 5.0
         << " (" << simulationResources[7] << " levels * cycles)" << "\n";
@@ -238,8 +237,19 @@ void readoutUpgrade(int upgradeType, vector<int>& levels, int elapsedSeconds) {
         << (int)elapsedSeconds/60%60 << " minutes" << "\n";
 }
 
+inline void clampEventCurrency(vector<double>& resources) {
+    if (resources.size() > 9) {
+        resources[9] = min(resources[9], EVENT_CURRENCY_CAP);
+    }
+}
+
 // =================== ALGORITHM FUNCTIONS ===============================
 double performUpgrade(vector<int>& levels, vector<double>& resources, int upgradeType, double& remainingTime) {
+    if (upgradeType >= NUM_RESOURCES && upgradeType < NUM_RESOURCES * 2) {
+        if (levels[upgradeType] >= SPEED_LEVEL_CAP) {
+            return 0.0;
+        }
+    }
     constexpr double cycleTimeMultiplier[10] = {
         1.0/3.0, 1.0, 1.0/3.0, 1.0/3.0, 1.0/3.0,
         1.0/3.0, 1.0/1200.0, 1.0/2500.0, 1.0/1800.0, 1.0/5000.0
@@ -306,6 +316,7 @@ double performUpgrade(vector<int>& levels, vector<double>& resources, int upgrad
         for (int i=0;i<NUM_RESOURCES;i++){
             resources[i] += productionRates[i] * timeNeeded;
         }
+        clampEventCurrency(resources);
         return timeNeeded;
     }
 
@@ -313,6 +324,7 @@ double performUpgrade(vector<int>& levels, vector<double>& resources, int upgrad
         resources[i] += productionRates[i] * timeNeeded - cost[i];
     }
     levels[upgradeType]++;
+    clampEventCurrency(resources);
     return timeNeeded;
 }
 double simulateUpgradePath(vector<int>& path, vector<int>& levels, vector<double>& resources, bool display = false) {
@@ -320,7 +332,7 @@ double simulateUpgradePath(vector<int>& path, vector<int>& levels, vector<double
     time = TOTAL_SECONDS;
     for (auto upgradeType : path) {
         if (time < 1e-3) return 0;
-        if (upgradeType >= NUM_RESOURCES && levels[upgradeType] >= 10) {
+        if (upgradeType >= NUM_RESOURCES && levels[upgradeType] >= SPEED_LEVEL_CAP) {
             continue; // Skip speed upgrades that are already maxed out
         }
         double timeTaken = performUpgrade(levels, resources, upgradeType, time);
@@ -337,7 +349,8 @@ double calculateScore(vector<double>& resources, bool display = false) {
     for (int i = 0; i < NUM_RESOURCES; i++) {
         score += resources[i] * 1e-15;
     }
-    score += (min(resources[9], 10000.0) + max(0.0, (resources[9] - 10000)) * 0.01) * (EVENT_CURRENCY_WEIGHT);
+    const double cappedEventCurrency = min(resources[9], EVENT_CURRENCY_CAP);
+    score += (cappedEventCurrency + max(0.0, (resources[9] - EVENT_CURRENCY_CAP)) * 0.01) * (EVENT_CURRENCY_WEIGHT);
     score += resources[7] * (FREE_EXP_WEIGHT);     // Free EXP
     score += resources[8] * (GROWTH_WEIGHT);       // Growth
     score += resources[6] * (PET_STONES_WEIGHT);   // Pet Stones
@@ -559,6 +572,7 @@ int main() {
     maxOptimizationIterations = cfg.maxOptimizationIterations;
     currentLevels = cfg.currentLevels;
     resourceCounts = cfg.resourceCounts;
+    clampEventCurrency(resourceCounts);
     upgradePath = cfg.upgradePath;
     busyTimesStart = cfg.busyTimesStart;
     busyTimesEnd = cfg.busyTimesEnd;

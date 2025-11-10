@@ -7,6 +7,10 @@
 #include <type_traits>
 #include "nlohmann/json.hpp"
 
+inline constexpr int NUM_RESOURCES = 10;
+inline constexpr int SPEED_LEVEL_CAP = 10;
+inline constexpr double EVENT_CURRENCY_CAP = 10000.0;
+
 struct AppConfig {
     // Scalars / weights / flags
     int UNLOCKED_PETS = 100;
@@ -197,6 +201,23 @@ inline AppConfig loadConfig(const std::string& path){
     loadIntArray("upgradePath", cfg.upgradePath, 0);
     loadDoubleArray("busyTimesStart", cfg.busyTimesStart, 0);
     loadDoubleArray("busyTimesEnd", cfg.busyTimesEnd, 0);
+
+    for (size_t i = 0; i < cfg.currentLevels.size(); ++i) {
+        if (cfg.currentLevels[i] < 0) {
+            cfg.currentLevels[i] = 0;
+        }
+    }
+    for (size_t i = NUM_RESOURCES; i < NUM_RESOURCES * 2 && i < cfg.currentLevels.size(); ++i) {
+        if (cfg.currentLevels[i] > SPEED_LEVEL_CAP) {
+            std::cerr << "Speed level at index " << (i - NUM_RESOURCES)
+                      << " exceeds cap of " << SPEED_LEVEL_CAP << ". Clamping.\n";
+            cfg.currentLevels[i] = SPEED_LEVEL_CAP;
+        }
+    }
+    if (cfg.resourceCounts.size() > 9 && cfg.resourceCounts[9] > EVENT_CURRENCY_CAP) {
+        std::cerr << "Event currency exceeds cap of " << EVENT_CURRENCY_CAP << ". Clamping.\n";
+        cfg.resourceCounts[9] = EVENT_CURRENCY_CAP;
+    }
 
     if (const nlohmann::json* resourcesIt = j.find("resourceNames")) {
         if (!resourcesIt->is_array()) {
