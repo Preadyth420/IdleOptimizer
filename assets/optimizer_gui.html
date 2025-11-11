@@ -13,6 +13,7 @@
     .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
     .row{display:grid;grid-template-columns: 260px 1fr;align-items:center;gap:8px;margin:6px 0}
     .row.multi{align-items:flex-start}
+    .row.multi>label{padding-top:4px}
     .row .checkCol{display:flex;flex-wrap:wrap;gap:8px 16px}
     .row .checkCol label{display:inline-flex;align-items:center;margin-right:12px;gap:6px;font-size:.95rem}
     .resgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
@@ -72,10 +73,10 @@
             <div class="row"><label>PET_STONES_WEIGHT</label><input id="PET_STONES_WEIGHT" type="number" step="any" value="0.000045"></div>
             <div class="row"><label>GROWTH_WEIGHT</label><input id="GROWTH_WEIGHT" type="number" step="any" value="0.00007"></div>
             <div class="row multi"><label>Flags</label>
-              <div>
+              <div class="checkCol">
                 <label><input type="checkbox" id="isFullPath" checked> isFullPath</label>
-                <label style="margin-left:10px"><input type="checkbox" id="allowSpeedUpgrades" checked> allowSpeedUpgrades</label>
-                <label style="margin-left:10px"><input type="checkbox" id="runOptimization" checked> runOptimization</label>
+                <label><input type="checkbox" id="allowSpeedUpgrades" checked> allowSpeedUpgrades</label>
+                <label><input type="checkbox" id="runOptimization" checked> runOptimization</label>
               </div>
             </div>
           </div>
