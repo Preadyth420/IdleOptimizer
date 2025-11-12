@@ -12,6 +12,7 @@
     .card{background:var(--card);border:1px solid #1c2533;border-radius:14px;padding:16px;margin-bottom:16px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
     .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
     .row{display:grid;grid-template-columns: 260px 1fr;align-items:center;gap:8px;margin:6px 0}
+    .row .checkCol label{display:inline-flex;align-items:center;margin-right:12px;gap:6px;font-size:.95rem}
     .resgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
     .upgrid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
     .tabs{display:flex;gap:6px;margin:6px 0 14px}
@@ -38,7 +39,7 @@
     <h1>Upgrade Optimizer — Settings GUI (v8 — 14-day event + Busy Schedule)</h1>
     <div class="tabs">
       <div class="tab active" id="tabMainBtn">Main</div>
-      <div class="tab" id="tabNamesBtn">Resource Names</div>
+      <div class="tab" id="tabNamesBtn">Logging &amp; Names</div>
     </div>
 
     <div class="card">
@@ -161,6 +162,31 @@
 
     <div id="tabNames" class="hidden">
       <div class="card">
+        <h2>Logging &amp; Runtime</h2>
+        <p class="muted">Configure how the optimizer writes progress updates and whether it pauses after finishing.</p>
+        <div class="row">
+          <label>Log outputs</label>
+          <div class="checkCol">
+            <label><input type="checkbox" id="logToConsole" checked> Console window</label>
+            <label><input type="checkbox" id="logToFile"> Write log file</label>
+            <label><input type="checkbox" id="appendLogFile"> Add to existing log file (append)</label>
+          </div>
+        </div>
+        <div class="row">
+          <label>Log file path</label>
+          <input id="logFilePath" type="text" value="logs/run_latest.txt" placeholder="logs/run_latest.txt">
+        </div>
+        <div class="row">
+          <label>Pause on exit</label>
+          <div class="checkCol">
+            <label><input type="checkbox" id="pauseOnExit"> Keep window open after the run completes</label>
+          </div>
+        </div>
+        <p class="muted mini" id="logFileHint">We create folders automatically when writing the file. Uncheck "Write log file" if you don't want anything written to disk.</p>
+        <div class="mini" id="logSummary" style="margin-top:12px"></div>
+        <div class="preview" id="logPreview" style="margin-top:8px"></div>
+      </div>
+      <div class="card">
         <h2>Resource Names</h2>
         <p class="muted">Rename resources here for each event. Saved as <code>resourceNames</code> in JSON.</p>
         <div class="upgrid" id="namesGrid"></div>
@@ -282,6 +308,8 @@
 
   // ---- scalars ----
   function getScalars(){
+    const fileEnabled = $('logToFile').checked;
+    const filePath = $('logFilePath').value.trim();
     return {
       EVENT_DURATION_DAYS: +$('EVENT_DURATION_DAYS').value,
       EVENT_DURATION_HOURS: +$('EVENT_DURATION_HOURS').value,
@@ -297,6 +325,11 @@
       isFullPath: $('isFullPath').checked,
       allowSpeedUpgrades: $('allowSpeedUpgrades').checked,
       runOptimization: $('runOptimization').checked,
+      logToConsole: $('logToConsole').checked,
+      logToFile: fileEnabled,
+      appendLogFile: fileEnabled && $('appendLogFile').checked,
+      logFilePath: filePath || 'logs/run_latest.txt',
+      pauseOnExit: $('pauseOnExit').checked,
     };
   }
   function computedFreeExp(DLs){ return 1/((500+DLs)/5); }
@@ -516,6 +549,13 @@
     set('isFullPath', data.isFullPath ?? true);
     set('allowSpeedUpgrades', data.allowSpeedUpgrades ?? true);
     set('runOptimization', data.runOptimization ?? true);
+    set('logToConsole', data.logToConsole ?? true);
+    set('logToFile', data.logToFile ?? false);
+    set('appendLogFile', data.appendLogFile ?? false);
+    set('logFilePath', data.logFilePath ?? 'logs/run_latest.txt');
+    set('pauseOnExit', data.pauseOnExit ?? false);
+
+    updateLogControls();
 
     if (Array.isArray(data.resourceNames) && data.resourceNames.length>=10){
       resourceNames = data.resourceNames.slice(0,10);
@@ -534,6 +574,41 @@
     $('upgradePath').value    = (data.upgradePath   || []).join(', ');
     $('busyTimesStart').value = (data.busyTimesStart || []).join(', ');
     $('busyTimesEnd').value   = (data.busyTimesEnd   || []).join(', ');
+  }
+
+  function refreshLogSummary(){
+    const interval = Math.max(0, +$('outputInterval').value || 0);
+    const logToConsole = $('logToConsole').checked;
+    const logToFile = $('logToFile').checked;
+    const appendMode = $('appendLogFile').checked;
+    const path = ($('logFilePath').value || 'logs/run_latest.txt').trim();
+
+    const destinations = [];
+    if (logToConsole) destinations.push('console window');
+    if (logToFile) destinations.push(`file (${appendMode ? 'append' : 'overwrite'}: ${path})`);
+    if (!destinations.length) destinations.push('no active destinations');
+
+    const intervalText = interval <= 0
+      ? 'every improvement is logged immediately'
+      : `logs every ${interval} ms (${(interval / 1000).toFixed(1)} s)`;
+
+    $('logSummary').textContent = `Current logging: ${destinations.join(', ')} — ${intervalText}.`;
+
+    const preview = [];
+    preview.push('[Logger] Interval: ' + (interval <= 0 ? 'immediate' : `${interval} ms`));
+    preview.push('[Logger] Destinations: ' + destinations.join(', '));
+    if (!logToFile) {
+      preview.push('[Hint] Enable "Write log file" to keep a history on disk.');
+    }
+    $('logPreview').textContent = preview.join('\n');
+  }
+
+  function updateLogControls(){
+    const fileEnabled = $('logToFile').checked;
+    $('logFilePath').disabled = !fileEnabled;
+    $('appendLogFile').disabled = !fileEnabled;
+    $('logFileHint').style.opacity = fileEnabled ? '1' : '0.65';
+    refreshLogSummary();
   }
 
   // CSV mirror buttons now *work*
@@ -569,12 +644,18 @@
   // ---- init ----
   function onScalarChange(){ updateComputed(); }
   ['DLs','UNLOCKED_PETS'].forEach(id => $(id).addEventListener('input', onScalarChange));
+  $('logToFile').addEventListener('change', updateLogControls);
+  $('logToConsole').addEventListener('change', refreshLogSummary);
+  $('appendLogFile').addEventListener('change', refreshLogSummary);
+  $('logFilePath').addEventListener('input', refreshLogSummary);
+  $('outputInterval').addEventListener('input', refreshLogSummary);
   buildDailyBox();
   buildPerDayBox();
   buildNamesGrid();
   refreshResourceLabels();
   buildUpgradeGrids();
   updateComputed();
+  refreshLogSummary();
   populate({
     currentLevels: Array(21).fill(0),
     resourceCounts: [0,500000,0,0,0,0,0,1,1,0],

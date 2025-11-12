@@ -4,7 +4,8 @@
 #include <string>
 #include <fstream>
 #include <iostream>
-#include <nlohmann/json.hpp>
+#include <type_traits>
+#include "nlohmann/json.hpp"
 
 struct AppConfig {
     // Scalars / weights / flags
@@ -40,52 +41,107 @@ inline AppConfig loadConfig(const std::string& path){
         std::cerr << "config.json not found; using defaults.\n";
         return cfg;
     }
-    nlohmann::json j; f >> j;
+    nlohmann::json j;
+    try {
+        j = nlohmann::json::parse(f);
+    } catch (const std::exception& e) {
+        std::cerr << "Failed to parse config.json: " << e.what() << "\n";
+        return cfg;
+    }
 
-    auto get = [&](auto key, auto& out){
-        if (j.contains(key)) out = j[key].get<std::decay_t<decltype(out)>>();
+    auto safeAssign = [&](const char* key, auto& out) {
+        const nlohmann::json* it = j.find(key);
+        if (!it || it->is_null()) {
+            return;
+        }
+        try {
+            using ValueType = std::decay_t<decltype(out)>;
+            out = it->template get<ValueType>();
+        } catch (const std::exception& e) {
+            std::cerr << "Invalid value for '" << key << "': " << e.what() << "\n";
+        }
     };
 
-    if (j.contains("UNLOCKED_PETS")) cfg.UNLOCKED_PETS = j["UNLOCKED_PETS"].get<int>();
-    if (j.contains("DLs")) cfg.DLs = j["DLs"].get<int>();
-    if (j.contains("outputInterval")) cfg.outputInterval = j["outputInterval"].get<int>();
+    safeAssign("UNLOCKED_PETS", cfg.UNLOCKED_PETS);
+    safeAssign("DLs", cfg.DLs);
+    safeAssign("outputInterval", cfg.outputInterval);
+    safeAssign("EVENT_CURRENCY_WEIGHT", cfg.EVENT_CURRENCY_WEIGHT);
+    safeAssign("FREE_EXP_WEIGHT", cfg.FREE_EXP_WEIGHT);
+    safeAssign("PET_STONES_WEIGHT", cfg.PET_STONES_WEIGHT);
+    safeAssign("GROWTH_WEIGHT", cfg.GROWTH_WEIGHT);
+    safeAssign("isFullPath", cfg.isFullPath);
+    safeAssign("allowSpeedUpgrades", cfg.allowSpeedUpgrades);
+    safeAssign("runOptimization", cfg.runOptimization);
 
-    if (j.contains("EVENT_CURRENCY_WEIGHT")) cfg.EVENT_CURRENCY_WEIGHT = j["EVENT_CURRENCY_WEIGHT"].get<double>();
-    if (j.contains("FREE_EXP_WEIGHT")) cfg.FREE_EXP_WEIGHT = j["FREE_EXP_WEIGHT"].get<double>();
-    if (j.contains("PET_STONES_WEIGHT")) cfg.PET_STONES_WEIGHT = j["PET_STONES_WEIGHT"].get<double>();
-    if (j.contains("GROWTH_WEIGHT")) cfg.GROWTH_WEIGHT = j["GROWTH_WEIGHT"].get<double>();
+    auto loadIntArray = [&](const char* key, std::vector<int>& target, size_t expected) {
+        const nlohmann::json* node = j.find(key);
+        if (!node) {
+            return;
+        }
+        if (!node->is_array()) {
+            std::cerr << "Invalid value for '" << key << "': expected array.\n";
+            return;
+        }
+        std::vector<int> temp;
+        const auto& arr = node->as_array();
+        temp.reserve(arr.size());
+        for (const auto& entry : arr) {
+            if (!entry.is_number_integer()) {
+                std::cerr << "Invalid element in '" << key << "': expected integer.\n";
+                return;
+            }
+            temp.push_back(entry.get<int>());
+        }
+        if (temp.size() < expected) temp.resize(expected, 0);
+        if (temp.size() > expected) temp.resize(expected);
+        target = std::move(temp);
+    };
 
-    if (j.contains("isFullPath")) cfg.isFullPath = j["isFullPath"].get<bool>();
-    if (j.contains("allowSpeedUpgrades")) cfg.allowSpeedUpgrades = j["allowSpeedUpgrades"].get<bool>();
-    if (j.contains("runOptimization")) cfg.runOptimization = j["runOptimization"].get<bool>();
+    auto loadDoubleArray = [&](const char* key, std::vector<double>& target, size_t expected, double pad = 0.0) {
+        const nlohmann::json* node = j.find(key);
+        if (!node) {
+            return;
+        }
+        if (!node->is_array()) {
+            std::cerr << "Invalid value for '" << key << "': expected array.\n";
+            return;
+        }
+        std::vector<double> temp;
+        const auto& arr = node->as_array();
+        temp.reserve(arr.size());
+        for (const auto& entry : arr) {
+            if (!entry.is_number()) {
+                std::cerr << "Invalid element in '" << key << "': expected number.\n";
+                return;
+            }
+            temp.push_back(entry.get<double>());
+        }
+        if (expected > 0) {
+            if (temp.size() < expected) temp.resize(expected, pad);
+            if (temp.size() > expected) temp.resize(expected);
+        }
+        target = std::move(temp);
+    };
 
-    if (j.contains("currentLevels") && j["currentLevels"].is_array()) {
-        cfg.currentLevels.clear();
-        for (auto& it: j["currentLevels"]) cfg.currentLevels.push_back(it.get<int>());
-        if (cfg.currentLevels.size() < 21) cfg.currentLevels.resize(21,0);
-        if (cfg.currentLevels.size() > 21) cfg.currentLevels.resize(21);
-    }
-    if (j.contains("resourceCounts") && j["resourceCounts"].is_array()) {
-        cfg.resourceCounts.clear();
-        for (auto& it: j["resourceCounts"]) cfg.resourceCounts.push_back(it.get<double>());
-        if (cfg.resourceCounts.size() < 10) cfg.resourceCounts.resize(10,0.0);
-        if (cfg.resourceCounts.size() > 10) cfg.resourceCounts.resize(10);
-    }
-    if (j.contains("upgradePath") && j["upgradePath"].is_array()) {
-        cfg.upgradePath.clear();
-        for (auto& it: j["upgradePath"]) cfg.upgradePath.push_back(it.get<int>());
-    }
-    if (j.contains("busyTimesStart") && j["busyTimesStart"].is_array()) {
-        cfg.busyTimesStart.clear();
-        for (auto& it: j["busyTimesStart"]) cfg.busyTimesStart.push_back(it.get<double>());
-    }
-    if (j.contains("busyTimesEnd") && j["busyTimesEnd"].is_array()) {
-        cfg.busyTimesEnd.clear();
-        for (auto& it: j["busyTimesEnd"]) cfg.busyTimesEnd.push_back(it.get<double>());
-    }
-    if (j.contains("resourceNames") && j["resourceNames"].is_array()) {
-        for (size_t i=0;i<10 && i<j["resourceNames"].size();++i){
-            if (j["resourceNames"][i].is_string()) cfg.resourceNames[i] = j["resourceNames"][i].get<std::string>();
+    loadIntArray("currentLevels", cfg.currentLevels, 21);
+    loadDoubleArray("resourceCounts", cfg.resourceCounts, 10, 0.0);
+    loadIntArray("upgradePath", cfg.upgradePath, 0);
+    loadDoubleArray("busyTimesStart", cfg.busyTimesStart, 0);
+    loadDoubleArray("busyTimesEnd", cfg.busyTimesEnd, 0);
+
+    if (const nlohmann::json* resourcesIt = j.find("resourceNames")) {
+        if (!resourcesIt->is_array()) {
+            std::cerr << "Invalid value for 'resourceNames': expected array.\n";
+        } else {
+            const auto& arr = resourcesIt->as_array();
+            for (size_t i = 0; i < cfg.resourceNames.size() && i < arr.size(); ++i) {
+                const auto& entry = arr[i];
+                if (entry.is_string()) {
+                    cfg.resourceNames[i] = entry.get<std::string>();
+                } else {
+                    std::cerr << "Invalid element in 'resourceNames' at index " << i << ": expected string.\n";
+                }
+            }
         }
     }
 
