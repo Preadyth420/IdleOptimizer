@@ -9,14 +9,6 @@
 - Second tab lets you **rename resources** per event; names are saved to `resourceNames` in JSON.
 - C++ reads `resourceNames` from `config.json` and uses them for labels/logs.
 
-## Build (Windows / VS 2022)
-
-1. Install Visual Studio 2022 with "Desktop development with C++".
-2. Open this folder as a CMake project and build target `IdleOptimizer`.
-
-> Bundled with a minimal single-header JSON parser under `third_party/` so the
-> project builds fully offline.
-
 ## Run
 
 1. Open `assets/optimizer_gui.html` in your browser.
@@ -26,14 +18,14 @@
    - "Pause on exit" keeps the console window open after the run finishes.
    - "Max optimization iterations" caps how many non-improving iterations the search will attempt (set to `0` to stop immediately after the initial evaluation).
    - The live preview on the right summarises which logging destinations (console / file) are active.
-3. Click **Save JSON** to export `config.json` (or use the bundled `config.example.json` as a starting point).
+3. Click **Save JSON** to export `config.json` (or use the bundled `config.json` as a starting point).
 4. Place `config.json` next to the EXE (or run from this folder).
-5. Double-click `RunWithLog.bat` to capture output in `run_log.txt`, or launch the built executable directly.
-6. Logs written to disk land in the folder configured by the GUI (defaults to `logs/IdleOptimizer.log`).
+5. launch the built executable directly.
+6. Logs written to disk land in the folder configured by the GUI (defaults to `logs/latest_run_.log`).
 
 ## Notes
 
-- Event duration in C++ is compiled as **14 days** for now (matches the GUI).
+- Event duration in C++ is compiled as **14 days** for now (matches the GUI and Config.json).
 - `resourceNames` are read at runtime from `config.json`.
 - `busyTimesStart` / `busyTimesEnd` values in `config.json` are expressed as **hours from when you launch the optimizer**, not clock-of-day. For example, if you start a run at 08:00 and want a nightly pause from 19:00–03:00, enter start/end hours `11` and `19` (11 and 19 hours after launch) or use the GUI schedule generator, which outputs the correctly offset values. These fields now accept either decimal hours (`11`, `19.5`) or `HH:MM` strings (`19:00`, `03:30`) and we’ll convert them automatically.
 - To disable log file output, uncheck **Write log file** in the GUI before exporting your configuration.

@@ -9,3 +9,6 @@
 CMakeCache.txt
 CMakeFiles/
 *.tlog
+# Keep release folder (do NOT ignore)
+!release/
+!release/**
