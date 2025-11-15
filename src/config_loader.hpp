@@ -5,7 +5,7 @@
 #include <fstream>
 #include <iostream>
 #include <type_traits>
-#include "nlohmann/json.hpp"
+#include "../third_party/nlohmann/json.hpp"
 #include "constants.hpp"
 
 struct AppConfig {
@@ -101,13 +101,13 @@ inline AppConfig loadConfig(const std::string& path){
     }
 
     auto safeAssign = [&](const char* key, auto& out) {
-        const nlohmann::json* it = j.find(key);
-        if (!it || it->is_null()) {
+        const nlohmann::json it = j[key];
+        if (it.is_null()) {
             return;
         }
         try {
             using ValueType = std::decay_t<decltype(out)>;
-            out = it->template get<ValueType>();
+            out = it;
         } catch (const std::exception& e) {
             std::cerr << "Invalid value for '" << key << "': " << e.what() << "\n";
         }
@@ -137,10 +137,11 @@ inline AppConfig loadConfig(const std::string& path){
     safeAssign("pauseOnExit", cfg.pauseOnExit);
     safeAssign("maxOptimizationIterations", cfg.maxOptimizationIterations);
 
-    if (const nlohmann::json* logPathIt = j.find("logFilePath")) {
-        if (!logPathIt->is_null()) {
-            if (logPathIt->is_string()) {
-                cfg.logFilePath = logPathIt->get<std::string>();
+    if (j.contains("logFilePath")) {
+        const nlohmann::json logPathIt = j["logFilePath"];
+        if (!logPathIt.is_null()) {
+            if (logPathIt.is_string()) {
+                cfg.logFilePath = logPathIt.get<std::string>();
             } else {
                 std::cerr << "Invalid value for 'logFilePath': expected string.\n";
             }
@@ -148,16 +149,18 @@ inline AppConfig loadConfig(const std::string& path){
     }
 
     auto loadIntArray = [&](const char* key, std::vector<int>& target, size_t expected) {
-        const nlohmann::json* node = j.find(key);
-        if (!node) {
-            return;
+        const nlohmann::json node = j[key];
+        if (j.contains(key)) {
+            if (!node.is_array()) {
+                std::cerr << "Invalid value for '" << key << "': expected array.\n";
+                return;
+            }
         }
-        if (!node->is_array()) {
-            std::cerr << "Invalid value for '" << key << "': expected array.\n";
+        else {
             return;
         }
         std::vector<int> temp;
-        const auto& arr = node->as_array();
+        const auto& arr = node;
         temp.reserve(arr.size());
         for (const auto& entry : arr) {
             if (!entry.is_number_integer()) {
@@ -172,16 +175,18 @@ inline AppConfig loadConfig(const std::string& path){
     };
 
     auto loadDoubleArray = [&](const char* key, std::vector<double>& target, size_t expected, double pad = 0.0) {
-        const nlohmann::json* node = j.find(key);
-        if (!node) {
-            return;
+        const nlohmann::json node = j[key];
+        if (j.contains(key)) {
+            if (!node.is_array()) {
+                std::cerr << "Invalid value for '" << key << "': expected array.\n";
+                return;
+            }
         }
-        if (!node->is_array()) {
-            std::cerr << "Invalid value for '" << key << "': expected array.\n";
+        else {
             return;
         }
         std::vector<double> temp;
-        const auto& arr = node->as_array();
+        const auto& arr = node;
         temp.reserve(arr.size());
         for (const auto& entry : arr) {
             if (entry.is_number()) {
@@ -228,11 +233,12 @@ inline AppConfig loadConfig(const std::string& path){
         cfg.resourceCounts[9] = EVENT_CURRENCY_CAP;
     }
 
-    if (const nlohmann::json* resourcesIt = j.find("resourceNames")) {
-        if (!resourcesIt->is_array()) {
+    if (j.contains("resourceNames")) {
+        const nlohmann::json resourcesIt = j["resourceNames"];
+        if (!resourcesIt.is_array()) {
             std::cerr << "Invalid value for 'resourceNames': expected array.\n";
         } else {
-            const auto& arr = resourcesIt->as_array();
+            const auto& arr = resourcesIt;
             for (size_t i = 0; i < cfg.resourceNames.size() && i < arr.size(); ++i) {
                 const auto& entry = arr[i];
                 if (entry.is_string()) {

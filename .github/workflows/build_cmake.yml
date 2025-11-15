@@ -1,0 +1,39 @@
+name: Build
+on: [push]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: configure
+        run: cmake -B ${{github.workspace}}/build -DCMAKE_INSTALL_PREFIX=${{github.workspace}}/install
+
+      - name: build
+        run: cmake --build ${{github.workspace}}/build --config Release
+
+      - name: install
+        run: cmake --install ${{github.workspace}}/build
+
+      - name: store artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          path: ${{github.workspace}}/install
+
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    needs: build
+    if: github.ref_type == 'tag'
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          name: artifact
+      
+      - run: zip IdleOptimizer-${{github.ref_name}}-x64-windows.zip ./*
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: IdleOptimizer*.zip
