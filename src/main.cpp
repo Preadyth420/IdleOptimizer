@@ -378,16 +378,43 @@ double performUpgrade(vector<int>& levels, vector<double>& resources, int upgrad
     double productionRates[10] = {};
 
     switch (resourceType) {
-        case 0: cost[1] = baseCost * 10; break;
-        case 1: cost[1] = baseCost * 0.8; break;
-        case 2: cost[1] = baseCost; break;
-        case 3: cost[0] = baseCost; break;
-        case 4: cost[0] = baseCost; break;
-        case 5: cost[1] = baseCost; cost[2] = baseCost; break;
-        case 6: cost[0] = baseCost * 0.7; cost[3] = baseCost * 0.5; break;
-        case 7: cost[0] = baseCost; cost[4] = baseCost * 3; break;
-        case 8: cost[2] = baseCost * 1.2; cost[5] = baseCost; break;
-        case 9: cost[3] = baseCost; cost[4] = baseCost; cost[5] = baseCost; break;
+    case 0:
+        cost[1] = baseCost * 10;
+        break;
+    case 1:
+        cost[1] = baseCost * 0.8;
+        break;
+    case 2:
+        cost[1] = baseCost;
+        break;
+    case 3:
+        cost[1] = baseCost;
+        cost[2] = baseCost;
+        break;
+    case 4:
+        cost[1] = baseCost;
+        cost[2] = baseCost;
+        break;
+    case 5:
+        cost[0] = baseCost;
+        break;
+    case 6:
+        cost[0] = baseCost * 0.7;
+        cost[3] = baseCost * 0.5;
+        break;
+    case 7:
+        cost[0] = baseCost;
+        cost[4] = baseCost * 3;
+        break;
+    case 8:
+        cost[2] = baseCost * 1.2;
+        cost[5] = baseCost;
+        break;
+    case 9:
+        cost[3] = baseCost;
+        cost[4] = baseCost;
+        cost[5] = baseCost;
+        break;
     }
 
     productionRates[0] = levels[0] * cycleTimeMultiplier[0] * speedMultipliers[levels[10]];
