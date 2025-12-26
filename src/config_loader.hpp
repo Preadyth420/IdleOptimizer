@@ -4,6 +4,7 @@
 #include <string>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <type_traits>
 #include "nlohmann/json.hpp"
 #include "constants.hpp"
@@ -147,24 +148,56 @@ inline AppConfig loadConfig(const std::string& path){
         }
     }
 
+    auto parseIntListString = [&](const std::string& text, std::vector<int>& out) {
+        std::string normalized = text;
+        for (char& c : normalized) {
+            if (c == ',' || c == '[' || c == ']' || c == '{' || c == '}') {
+                c = ' ';
+            }
+        }
+        std::istringstream iss(normalized);
+        std::string token;
+        std::vector<int> values;
+        while (iss >> token) {
+            try {
+                size_t idx = 0;
+                int value = std::stoi(token, &idx);
+                if (idx != token.size()) {
+                    return false;
+                }
+                values.push_back(value);
+            } catch (...) {
+                return false;
+            }
+        }
+        out = std::move(values);
+        return true;
+    };
+
     auto loadIntArray = [&](const char* key, std::vector<int>& target, size_t expected) {
         const nlohmann::json* node = j.find(key);
         if (!node) {
             return;
         }
-        if (!node->is_array()) {
-            std::cerr << "Invalid value for '" << key << "': expected array.\n";
-            return;
-        }
         std::vector<int> temp;
-        const auto& arr = node->as_array();
-        temp.reserve(arr.size());
-        for (const auto& entry : arr) {
-            if (!entry.is_number_integer()) {
-                std::cerr << "Invalid element in '" << key << "': expected integer.\n";
+        if (node->is_array()) {
+            const auto& arr = node->as_array();
+            temp.reserve(arr.size());
+            for (const auto& entry : arr) {
+                if (!entry.is_number_integer()) {
+                    std::cerr << "Invalid element in '" << key << "': expected integer.\n";
+                    return;
+                }
+                temp.push_back(entry.get<int>());
+            }
+        } else if (node->is_string()) {
+            if (!parseIntListString(node->get<std::string>(), temp)) {
+                std::cerr << "Invalid value for '" << key << "': expected CSV integer list.\n";
                 return;
             }
-            temp.push_back(entry.get<int>());
+        } else {
+            std::cerr << "Invalid value for '" << key << "': expected array.\n";
+            return;
         }
         if (temp.size() < expected) temp.resize(expected, 0);
         if (temp.size() > expected) temp.resize(expected);
@@ -208,6 +241,9 @@ inline AppConfig loadConfig(const std::string& path){
     loadIntArray("currentLevels", cfg.currentLevels, 21);
     loadDoubleArray("resourceCounts", cfg.resourceCounts, 10, 0.0);
     loadIntArray("upgradePath", cfg.upgradePath, 0);
+    if (cfg.upgradePath.empty()) {
+        loadIntArray("previousUpgradePath", cfg.upgradePath, 0);
+    }
     loadDoubleArray("busyTimesStart", cfg.busyTimesStart, 0);
     loadDoubleArray("busyTimesEnd", cfg.busyTimesEnd, 0);
 
