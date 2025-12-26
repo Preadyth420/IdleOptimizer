@@ -184,16 +184,54 @@ inline AppConfig loadConfig(const std::string& path){
         if (!node) {
             return;
         }
+        auto typeLabel = [](const nlohmann::json& value) {
+            switch (value.type()) {
+                case nlohmann::json::value_t::null: return "null";
+                case nlohmann::json::value_t::object: return "object";
+                case nlohmann::json::value_t::array: return "array";
+                case nlohmann::json::value_t::string: return "string";
+                case nlohmann::json::value_t::boolean: return "boolean";
+                case nlohmann::json::value_t::number_integer: return "integer";
+                case nlohmann::json::value_t::number_unsigned: return "unsigned";
+                case nlohmann::json::value_t::number_float: return "float";
+                case nlohmann::json::value_t::binary: return "binary";
+                case nlohmann::json::value_t::discarded: return "discarded";
+            }
+            return "unknown";
+        };
         std::vector<int> temp;
         if (node->is_array()) {
             const auto& arr = node->as_array();
             temp.reserve(arr.size());
+            size_t index = 0;
             for (const auto& entry : arr) {
-                if (!entry.is_number_integer()) {
-                    std::cerr << "Invalid element in '" << key << "': expected integer.\n";
+                if (entry.is_number_integer()) {
+                    temp.push_back(entry.get<int>());
+                } else if (entry.is_string()) {
+                    const std::string text = entry.get<std::string>();
+                    try {
+                        size_t parsed = 0;
+                        const int value = std::stoi(text, &parsed);
+                        if (parsed != text.size()) {
+                            std::cerr << "Invalid element in '" << key << "' at index " << index
+                                      << " (type " << typeLabel(entry)
+                                      << "): expected integer.\n";
+                            return;
+                        }
+                        temp.push_back(value);
+                    } catch (...) {
+                        std::cerr << "Invalid element in '" << key << "' at index " << index
+                                  << " (type " << typeLabel(entry)
+                                  << "): expected integer.\n";
+                        return;
+                    }
+                } else {
+                    std::cerr << "Invalid element in '" << key << "' at index " << index
+                              << " (type " << typeLabel(entry)
+                              << "): expected integer.\n";
                     return;
                 }
-                temp.push_back(entry.get<int>());
+                ++index;
             }
         } else if (node->is_string()) {
             if (!parseIntListString(node->get<std::string>(), temp)) {
