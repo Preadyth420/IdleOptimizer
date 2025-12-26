@@ -4,6 +4,7 @@
 #include <string>
 #include <fstream>
 #include <iostream>
+#include <filesystem>
 #include <sstream>
 #include <type_traits>
 #include "nlohmann/json.hpp"
@@ -88,9 +89,13 @@ inline bool parseClockHours(const std::string& text, double& out){
 
 inline AppConfig loadConfig(const std::string& path){
     AppConfig cfg;
+    std::error_code pathError;
+    const std::filesystem::path absolutePath = std::filesystem::absolute(path, pathError);
+    const std::string pathLabel = pathError ? path : absolutePath.string();
+    std::cerr << "Loading config from: " << pathLabel << "\n";
     std::ifstream f(path);
     if(!f.good()){
-        std::cerr << "config.json not found; using defaults.\n";
+        std::cerr << "Config not found at " << pathLabel << "; using defaults.\n";
         return cfg;
     }
     nlohmann::json j;
