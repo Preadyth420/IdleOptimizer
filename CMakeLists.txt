@@ -14,7 +14,16 @@ set(RUNTIME_DIR "$<TARGET_FILE_DIR:IdleOptimizer>")
 # Copy GUI + example config + runner BAT to the EXE folder
 set(CONFIG_EXAMPLE_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/config.14days.example.json")
 if (NOT EXISTS "${CONFIG_EXAMPLE_SOURCE}")
-  set(CONFIG_EXAMPLE_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/config.example.json")
+  # Fallback to the bundled example that ships alongside the HTML in assets/
+  set(CONFIG_EXAMPLE_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/assets/config.example.json")
+endif()
+
+set(RUN_WITH_LOG_BAT "${CMAKE_CURRENT_SOURCE_DIR}/RunWithLog.bat")
+set(RUN_WITH_LOG_COMMAND)
+if (EXISTS "${RUN_WITH_LOG_BAT}")
+  set(RUN_WITH_LOG_COMMAND
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${RUN_WITH_LOG_BAT}" "${RUNTIME_DIR}/RunWithLog.bat"
+  )
 endif()
 
 add_custom_command(TARGET IdleOptimizer POST_BUILD
@@ -23,7 +32,7 @@ add_custom_command(TARGET IdleOptimizer POST_BUILD
   # COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/assets" "${RUNTIME_DIR}/assets"
   COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/assets/optimizer_gui.html" "${RUNTIME_DIR}/optimizer_gui.html"
   COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CONFIG_EXAMPLE_SOURCE}" "${RUNTIME_DIR}/config.example.json"
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/RunWithLog.bat" "${RUNTIME_DIR}/RunWithLog.bat"
+  ${RUN_WITH_LOG_COMMAND}
 )
 
 if (WIN32)
@@ -47,13 +56,20 @@ endif()
 set(GUI_HTML         ${CMAKE_CURRENT_SOURCE_DIR}/assets/optimizer_gui.html)
 set(OPEN_GUI_BAT     ${CMAKE_CURRENT_SOURCE_DIR}/OpenGUI.bat)
 
+set(OPEN_GUI_COMMAND)
+if (EXISTS "${OPEN_GUI_BAT}")
+  set(OPEN_GUI_COMMAND
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${OPEN_GUI_BAT}"   "$<TARGET_FILE_DIR:IdleOptimizer>/OpenGUI.bat"
+  )
+endif()
+
 add_custom_command(TARGET IdleOptimizer POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:IdleOptimizer>/assets"
   COMMAND ${CMAKE_COMMAND} -E copy_if_different "${GUI_HTML}"       "$<TARGET_FILE_DIR:IdleOptimizer>/assets/optimizer_gui.html"
   # Don’t overwrite a user’s config.json — ship an example next to the exe
   COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CONFIG_EXAMPLE_SOURCE}" "$<TARGET_FILE_DIR:IdleOptimizer>/config.example.json"
   # (Optional) drop the helper script next to the exe
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different "${OPEN_GUI_BAT}"   "$<TARGET_FILE_DIR:IdleOptimizer>/OpenGUI.bat"
+  ${OPEN_GUI_COMMAND}
   COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:IdleOptimizer>/third_party"
   COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/third_party" "$<TARGET_FILE_DIR:IdleOptimizer>/third_party"
 )
