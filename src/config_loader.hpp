@@ -185,18 +185,15 @@ inline AppConfig loadConfig(const std::string& path){
             return;
         }
         auto typeLabel = [](const nlohmann::json& value) {
-            switch (value.type()) {
-                case nlohmann::json::value_t::null: return "null";
-                case nlohmann::json::value_t::object: return "object";
-                case nlohmann::json::value_t::array: return "array";
-                case nlohmann::json::value_t::string: return "string";
-                case nlohmann::json::value_t::boolean: return "boolean";
-                case nlohmann::json::value_t::number_integer: return "integer";
-                case nlohmann::json::value_t::number_unsigned: return "unsigned";
-                case nlohmann::json::value_t::number_float: return "float";
-                case nlohmann::json::value_t::binary: return "binary";
-                case nlohmann::json::value_t::discarded: return "discarded";
-            }
+            if (value.is_null()) return "null";
+            if (value.is_object()) return "object";
+            if (value.is_array()) return "array";
+            if (value.is_string()) return "string";
+            if (value.is_boolean()) return "boolean";
+            if (value.is_number_integer()) return "integer";
+            if (value.is_number_unsigned()) return "unsigned";
+            if (value.is_number_float()) return "float";
+            if (value.is_number()) return "number";
             return "unknown";
         };
         std::vector<int> temp;
@@ -214,20 +211,20 @@ inline AppConfig loadConfig(const std::string& path){
                         const int value = std::stoi(text, &parsed);
                         if (parsed != text.size()) {
                             std::cerr << "Invalid element in '" << key << "' at index " << index
-                                      << " (type " << entry.type_name()
+                                      << " (type " << typeLabel(entry)
                                       << "): expected integer.\n";
                             return;
                         }
                         temp.push_back(value);
                     } catch (...) {
                         std::cerr << "Invalid element in '" << key << "' at index " << index
-                                  << " (type " << entry.type_name()
+                                  << " (type " << typeLabel(entry)
                                   << "): expected integer.\n";
                         return;
                     }
                 } else {
                     std::cerr << "Invalid element in '" << key << "' at index " << index
-                              << " (type " << entry.type_name()
+                              << " (type " << typeLabel(entry)
                               << "): expected integer.\n";
                     return;
                 }
