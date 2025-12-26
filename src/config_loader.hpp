@@ -184,6 +184,21 @@ inline AppConfig loadConfig(const std::string& path){
         if (!node) {
             return;
         }
+        auto typeLabel = [](const nlohmann::json& value) {
+            switch (value.type()) {
+                case nlohmann::json::value_t::null: return "null";
+                case nlohmann::json::value_t::object: return "object";
+                case nlohmann::json::value_t::array: return "array";
+                case nlohmann::json::value_t::string: return "string";
+                case nlohmann::json::value_t::boolean: return "boolean";
+                case nlohmann::json::value_t::number_integer: return "integer";
+                case nlohmann::json::value_t::number_unsigned: return "unsigned";
+                case nlohmann::json::value_t::number_float: return "float";
+                case nlohmann::json::value_t::binary: return "binary";
+                case nlohmann::json::value_t::discarded: return "discarded";
+            }
+            return "unknown";
+        };
         std::vector<int> temp;
         if (node->is_array()) {
             const auto& arr = node->as_array();
