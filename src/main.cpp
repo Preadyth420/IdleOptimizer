@@ -138,6 +138,23 @@ void printVector(const vector<T>& x, ostream& out = cout) {
         if (i+1<x.size()) out << ",";
     }
 }
+
+string summarizeUpgradePath(const vector<int>& path, size_t maxEntries = 10) {
+    ostringstream ss;
+    ss << "size=" << path.size() << ", entries=[";
+    size_t entries = min(maxEntries, path.size());
+    for (size_t i = 0; i < entries; ++i) {
+        ss << path[i];
+        if (i + 1 < entries) {
+            ss << ",";
+        }
+    }
+    if (path.size() > entries) {
+        ss << ",...";
+    }
+    ss << "]";
+    return ss.str();
+}
 class Logger {
     int interval;
     mutable chrono::steady_clock::time_point lastLogTime;
@@ -793,16 +810,21 @@ int main() {
     }
     loggerPtr->logLine(mappingStr);
 
+    loggerPtr->logLine(string("Initial upgrade path: ") + summarizeUpgradePath(upgradePath) + "\n");
+
     nameUpgrades();
     preprocessBusyTimes(busyTimesStart, busyTimesEnd);
 
     if (isFullPath) {
         adjustFullPath(currentLevels);
+        loggerPtr->logLine(string("After adjustFullPath: ") + summarizeUpgradePath(upgradePath) + "\n");
     }
     if (upgradePath.empty()) {
         upgradePath = generateRandomPath();
     }
     pruneCappedSpeedUpgrades(upgradePath, currentLevels);
+    loggerPtr->logLine(string("After pruneCappedSpeedUpgrades (pre-optimization): ")
+                       + summarizeUpgradePath(upgradePath) + "\n");
 
     calculateFinalPath(upgradePath, loggerPtr);
 
@@ -816,6 +838,8 @@ int main() {
     }
 
     pruneCappedSpeedUpgrades(upgradePath, currentLevels);
+    loggerPtr->logLine(string("After pruneCappedSpeedUpgrades (post-optimization): ")
+                       + summarizeUpgradePath(upgradePath) + "\n");
     calculateFinalPath(upgradePath, loggerPtr);
     const string doneMessage = string("Done.\n");
     if (loggerPtr) {
