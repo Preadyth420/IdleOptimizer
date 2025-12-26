@@ -214,20 +214,20 @@ inline AppConfig loadConfig(const std::string& path){
                         const int value = std::stoi(text, &parsed);
                         if (parsed != text.size()) {
                             std::cerr << "Invalid element in '" << key << "' at index " << index
-                                      << " (type " << typeLabel(entry)
+                                      << " (type " << entry.type_name()
                                       << "): expected integer.\n";
                             return;
                         }
                         temp.push_back(value);
                     } catch (...) {
                         std::cerr << "Invalid element in '" << key << "' at index " << index
-                                  << " (type " << typeLabel(entry)
+                                  << " (type " << entry.type_name()
                                   << "): expected integer.\n";
                         return;
                     }
                 } else {
                     std::cerr << "Invalid element in '" << key << "' at index " << index
-                              << " (type " << typeLabel(entry)
+                              << " (type " << entry.type_name()
                               << "): expected integer.\n";
                     return;
                 }
