@@ -187,7 +187,6 @@ inline AppConfig loadConfig(const std::string& path){
             if (value.is_string()) return "string";
             if (value.is_boolean()) return "boolean";
             if (value.is_number_integer()) return "integer";
-            if (value.is_number_unsigned()) return "unsigned";
             if (value.is_number_float()) return "float";
             if (value.is_number()) return "number";
             return "unknown";
