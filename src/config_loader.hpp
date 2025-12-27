@@ -180,10 +180,6 @@ inline AppConfig loadConfig(const std::string& path){
     };
 
     auto loadIntArray = [&](const char* key, std::vector<int>& target, size_t expected) {
-        const nlohmann::json* node = j.find(key);
-        if (!node) {
-            return;
-        }
         auto typeLabel = [](const nlohmann::json& value) {
             if (value.is_null()) return "null";
             if (value.is_object()) return "object";
@@ -196,6 +192,11 @@ inline AppConfig loadConfig(const std::string& path){
             if (value.is_number()) return "number";
             return "unknown";
         };
+        const nlohmann::json* node = j.find(key);
+        if (!node || node->is_null()) {
+            std::cerr << "Config key '" << key << "' not found or null.\n";
+            return;
+        }
         std::vector<int> temp;
         if (node->is_array()) {
             const auto& arr = node->as_array();
@@ -236,7 +237,8 @@ inline AppConfig loadConfig(const std::string& path){
                 return;
             }
         } else {
-            std::cerr << "Invalid value for '" << key << "': expected array.\n";
+            std::cerr << "Invalid value for '" << key << "': expected array or CSV integer list string"
+                      << " (type " << typeLabel(*node) << ").\n";
             return;
         }
         if (temp.size() < expected) temp.resize(expected, 0);
